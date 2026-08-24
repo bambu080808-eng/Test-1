@@ -326,3 +326,32 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+import os
+from threading import Thread
+from flask import Flask
+
+# Render portini aldamchi server bilan band qilish
+flask_app = Flask('')
+
+@flask_app.route('/')
+def home():
+    return "Bot status: Active"
+
+def run_http():
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_http)
+    t.daemon = True
+    t.start()
+
+# Botni ishga tushirish qismi
+if __name__ == '__main__':
+    keep_alive()  # Soxta serverni yoqamiz
+    
+    # Shu yerdan pastda sizning mavjud botni run/polling qilish kodingiz turadi:
+    # masalan: application.run_polling() yoki app.run_polling()
+
