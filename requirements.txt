@@ -1,5 +1,5 @@
-python-telegram-bot==21.6
-requests==2.32.3
-beautifulsoup4==4.12.3
-supabase==2.9.1
-google-genai==1.15.0
+python-telegram-bot
+requests
+beautifulsoup4
+supabase
+google-genai
