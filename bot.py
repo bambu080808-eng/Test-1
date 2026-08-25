@@ -1,7 +1,7 @@
 import os
 import logging
 import asyncio
-import requests
+from google import genai
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
@@ -14,131 +14,179 @@ from telegram.ext import (
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-TOKEN = os.environ.get("BOT_TOKEN") or "7857867174:AAEghTH8fqeItdfZSFbxy1JP9KytrMdS6mgc"
-FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY") or "6d207e02198a847aa98d0a2a901485a5"
+TOKEN = os.environ.get("BOT_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-STEP1, STEP2 = range(2)
+# Gemini klienta
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+WAITING_INPUT = range(1)
 LOCK = asyncio.Lock()
 
-def upload_to_freeimage(img_bytes: bytes) -> str:
-    url = "https://freeimage.host/api/1/upload"
-    payload = {
-        'key': FREEIMAGE_API_KEY,
-        'action': 'upload',
-        'format': 'json'
-    }
-    files = {'source': ('image.jpg', img_bytes, 'image/jpeg')}
-    
-    response = requests.post(url, data=payload, files=files, timeout=20)
-    data = response.json()
-    
-    if response.status_code == 200 and data.get("status_code") == 200:
-        return data["image"]["url"]
-    else:
-        raise Exception(f"Yuklashda xatolik: {data}")
+SYSTEM_PROMPT = """
+Siz — e-commerce platformasi uchun Xitoy marketplace'laridan (Taobao/Pinduoduo/1688) olingan mahsulot ma'lumotlarini o'zbek tilidagi standart HTML kartochka formatiga me'yoriy va to'liq o'girib beruvchi professional AI assistentsiz.
+Rasm, matn, havolalar (URL) yoki skrinshotlar yuborilganda, har doim quyidagi qat'iy qoidalar va HTML strukturasi bo'yicha javob bering:
+
+1. CHEKSIZ MA'LUMOT VA RASMLARNI TO'LIQ QAMRAB OLISH:
+Foydalanuvchi qancha mahsulot rasmi, sharh matni yoki sharh rasmlarini yubormasin — ularning barchasini QISQARTIRMASDAN, HECH BIRINI TUSHIRIB QOLDIRMASDAN joylashtiring. "va hokazo", "..." kabi qisqartirishlar qilish QAT'IYAN MAN ETILADI.
+
+2. TIL VA TILSHUNOSLIK QOIDASI:
+Barcha matnlar, xususiyatlar hamda sharhlar faqat sof, ravon va tushunarli o'zbek tilida bo'lishi shart. Inglizcha yoki xitoycha so'zlarni moslashtirib tarjima qiling.
+
+3. RASMLARNI INTEGRATSIYA QILISH VA TARTIBI:
+Barcha rasmlar to'g'ridan-to'g'ri o'zingizga kelgan rasmlardan foydalanib yoki qabul qilingan havolalar asosida 2 ta mustaqil guruhga ajratiladi:
+A) MAHSULOT KO'RISH RASMLARI (Galereya): HTML blokining eng boshida, <div class="images"> ichida joylashadi. Birinchi turgan <img> — asosiy (muqova) rasm. Barcha rasmlar shu yerga kiritiladi.
+B) SHARH (KOMMENTARIYA) RASMLARI: Faqat tegishli <div class="review"> bloki ichida, muallif (<span class="author">) va matn (<span class="text">) dan KEYIN, <div class="review-images"> ostida joylashadi.
+
+4. VARIANT VA O'LCHAMLARNI TAHLIL QILISH:
+Faqat sotuvda bor (aniq, to'q shriftli, faol) o'lcham va ranglarni <span> teglarida taqdim eting. Xira yoki tugaganlarini qo'shmang.
+
+5. KATALOG VA MAHSULOT TURLARI STANDARTLARI:
+<span class="catalog"> va <span class="type"> qiymatlarini faqat quyidagi tasdiqlangan ro'yxatdan oling:
+Poyabzallar: Erkaklar poyabzali, Ayollar poyabzali, Bolalar poyabzali, Uy poyabzali (Shlepka va tapchkalar), Sport poyabzali (Krosovka va kedalar), Slip-on va mokasinalar.
+Kiyim-kechak: Erkaklar kiyimi / Ayollar kiyimi / Bolalar kiyimi, Ichki kiyim va paypoqlar / Ustki kiyim (Kurtka, palto).
+Sumka va Aksessuarlar: Ayollar sumkasi / Erkaklar sumkasi va hamyonlar / Ryukzaklar / Kamar va soatlar / Ko'zoynaklar va zargarlik buyumlari.
+Uy-ro'zg'or buyumlari: Oshxona jihozlari / Hammom va hojatxona buyumlari / Uy dekori va yoritgichlar / Tozalash va tartibga solish vositalari.
+Maishiy texnika va Elektronika: Kichik maishiy texnika / Telefon va gadjet aksessuarlari / Go'zallik va parvarish texnikasi.
+
+6. SHARH MUALLIFI ISMINI ID FORMATIDA YOZISH:
+Sharh qoldirgan har bir xaridorning ismi (<span class="author">) o'rniga faqat va faqat "ID: " so'zi hamda 10 xonali tasodifiy raqam biriktirib yoziladi (masalan: <span class="author">ID: 4829104752</span>).
+
+7. STANDART HTML SHABLON STRUKTURASI:
+Javobni FAQAT quyidagi strukturada, ortiqcha gaplarsiz taqdim eting:
+<div class="product">
+  <div class="images">
+    <img src="...">
+  </div>
+  <span class="price">0.00</span>
+  <h2 class="name">Mahsulot nomi (O'zbek tilida)</h2>
+  <div class="variant" data-type="Rang">
+    <span>Mavjud rang 1</span>
+  </div>
+  <div class="variant" data-type="Olcham">
+    <span>Mavjud o'lcham</span>
+  </div>
+  <p class="desc">Mahsulot haqida batafsil ma'lumot...</p>
+  <span class="catalog">Katalog nomi</span>
+  <span class="type">Mahsulot turi</span>
+  <div class="stats">
+    <span data-key="rating">4.8</span>
+    <span data-key="reviews">100</span>
+    <span data-key="views">1000</span>
+    <span data-key="likes">500</span>
+    <span data-key="sold">200</span>
+  </div>
+  <div class="extra" data-key="Xususiyat">Qiymat</div>
+  <div class="review">
+    <span class="author">ID: 1234567890</span>
+    <span class="text">Sharh matni...</span>
+    <div class="review-images">
+      <img src="...">
+    </div>
+  </div>
+</div>
+"""
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['step1_images'] = []
-    context.user_data['step2_images'] = []
+    context.user_data['media_list'] = []
     
-    keyboard = [["▶️ Step 1 ni boshlash"]]
+    keyboard = [["▶️ Boshlash"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     if update.message:
         await update.message.reply_text(
-            "Salom! Mahsulot rasmlarini URL havolalarga aylantirish botiga xush kelibsiz.",
+            "Salom! Mahsulot ma'lumotlari va rasmlarini yuboring. Tayyor bo'lgach **Done ✅** tugmasini bosing.",
             reply_markup=reply_markup
         )
     return ConversationHandler.END
 
-async def start_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['step1_images'] = []
-    context.user_data['step2_images'] = []
-    
-    keyboard = [["Next ➡️"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
-    
-    await update.message.reply_text(
-        "📸 **Step 1:** Iltimos, birinchi bosqich rasmlarini yuboring (albom yoki bittalab).\n\n"
-        "Rasmlar yuklanib bo'lgach, pastdagi **Next ➡️** tugmasini bosing.",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
-    return STEP1
-
-async def collect_step1_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.photo:
-        return
-    
-    photo = update.message.photo[-1]
-    async with LOCK:
-        file = await context.bot.get_file(photo.file_id)
-        img_bytes = await file.download_as_bytearray()
-        context.user_data.setdefault('step1_images', []).append(bytes(img_bytes))
-
-async def to_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count1 = len(context.user_data.get('step1_images', []))
+async def ask_product_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['media_list'] = []
     
     keyboard = [["Done ✅"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        f"✅ Step 1 uchun **{count1} ta** rasm qabul qilindi!\n\n"
-        f"📸 **Step 2:** Endi ikkinchi bosqich rasmlarini yuboring.\n\n"
-        f"Rasmlarni yuborib bo'lgach, pastdagi **Done ✅** tugmasini bosing.",
+        "📥 Iltimos, mahsulotga tegishli barcha ma'lumotlarni, matnlarni va rasmlarni yuboring "
+        "(albom, bittalab yoki aralash ko'rinishda).\n\n"
+        "Barcha rasm va ma'lumotlarni yuborib bo'lgach, pastdagi **Done ✅** tugmasini bosing.",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
-    return STEP2
+    return WAITING_INPUT
 
-async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.photo:
-        return
-        
-    photo = update.message.photo[-1]
+async def collect_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with LOCK:
-        file = await context.bot.get_file(photo.file_id)
-        img_bytes = await file.download_as_bytearray()
-        context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
+        # Agar rasm kelsa
+        if update.message.photo:
+            photo = update.message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            img_bytes = await file.download_as_bytearray()
+            context.user_data.setdefault('media_list', []).append({
+                "type": "photo", 
+                "data": bytes(img_bytes)
+            })
+        
+        # Agar matn kelsa
+        if update.message.text and update.message.text != "Done ✅":
+            context.user_data.setdefault('media_list', []).append({
+                "type": "text", 
+                "data": update.message.text
+            })
 
-async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count1 = len(context.user_data.get('step1_images', []))
-    count2 = len(context.user_data.get('step2_images', []))
-    total = count1 + count2
+async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    media_list = context.user_data.get('media_list', [])
+    total_sent = len(media_list)
     
-    status_msg = await update.message.reply_text(
-        f"🎉 Jami **{total} ta** rasm qabul qilindi (Step 1: {count1} ta, Step 2: {count2} ta).\n\n"
-        f"⏳ Barcha rasmlar uchun URL havolalar tayyorlanmoqda, kuting...",
+    if total_sent == 0:
+        await update.message.reply_text("⚠️ Siz hali hech qanday rasm yoki ma'lumot yubormadingiz!")
+        return WAITING_INPUT
+
+    await update.message.reply_text(
+        f"📊 **Hisobot:**\n"
+        f"• Yuborilgan elementlar (rasm/matn): **{total_sent} ta**\n"
+        f"• Qabul qilib olindi: **{total_sent} ta**\n\n"
+        f"⏳ Ma'lumotlar tahlil qilinmoqda va Gemini orqali HTML kartochka tayyorlanmoqda, iltimos kuting...",
         reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
-    
-    step1_urls = []
-    for img in context.user_data.get('step1_images', []):
-        try:
-            url = upload_to_freeimage(img)
-            step1_urls.append(url)
-        except Exception as e:
-            step1_urls.append(f"Xatolik: {str(e)}")
-            
-    step2_urls = []
-    for img in context.user_data.get('step2_images', []):
-        try:
-            url = upload_to_freeimage(img)
-            step2_urls.append(url)
-        except Exception as e:
-            step2_urls.append(f"Xatolik: {str(e)}")
-            
-    res_text1 = "🔹 **STEP 1 URLs:**\n" + ("\n".join(step1_urls) if step1_urls else "Rasm yuborilmadi.")
-    res_text2 = "🔹 **STEP 2 URLs:**\n" + ("\n".join(step2_urls) if step2_urls else "Rasm yuborilmadi.")
-    
-    await update.message.reply_text("✅ Barcha havolalar tayyor bo'ldi!")
-    await update.message.reply_text(res_text1, disable_web_page_preview=True, parse_mode="Markdown")
-    await update.message.reply_text(res_text2, disable_web_page_preview=True, parse_mode="Markdown")
-    
-    restart_keyboard = [["▶️ Step 1 ni boshlash"]]
+
+    try:
+        # Gemini uchun kontent tayyorlaymiz
+        contents = [SYSTEM_PROMPT]
+        
+        for item in media_list:
+            if item["type"] == "photo":
+                contents.append(client.types.Part.from_bytes(
+                    data=item["data"],
+                    mime_type='image/jpeg',
+                ))
+            elif item["type"] == "text":
+                contents.append(item["data"])
+
+        # Gemini modeliga so'rov yuborish (gemini-2.5-flash yoki mos model)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=contents,
+        )
+        
+        html_output = response.text
+
+        await update.message.reply_text("✅ Ma'lumotlar muvaffaqiyatli ajratib olindi va tayyorlandi!")
+        
+        # Uzun HTML'ni xavfsiz yuborish uchun bo'laklaymiz yoki code block qilib tashlaymiz
+        if len(html_output) > 4000:
+            for i in range(0, len(html_output), 4000):
+                await update.message.reply_text(f"```html\n{html_output[i:i+4000]}\n```", parse_mode="Markdown")
+        else:
+            await update.message.reply_text(f"```html\n{html_output}\n```", parse_mode="Markdown")
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Xatolik yuz berdi: {str(e)}")
+
+    restart_keyboard = [["▶️ Boshlash"]]
     await update.message.reply_text(
-        "Yangi rasmlar yuklash uchun tugmani bosing:",
+        "Yangi mahsulot kiritish uchun quyidagi tugmani bosing:",
         reply_markup=ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
     )
     
@@ -153,17 +201,13 @@ async def run_bot():
     
     conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.Regex(r"^▶️ Step 1 ni boshlash$"), start_step1),
-            CommandHandler("start", start_step1)
+            MessageHandler(filters.Regex(r"^▶️ Boshlash$"), ask_product_info),
+            CommandHandler("start", ask_product_info)
         ],
         states={
-            STEP1: [
-                MessageHandler(filters.Regex(r"^Next ➡️$"), to_step2),
-                MessageHandler(filters.PHOTO, collect_step1_images)
-            ],
-            STEP2: [
-                MessageHandler(filters.Regex(r"^Done ✅$"), finish),
-                MessageHandler(filters.PHOTO, collect_step2_images)
+            WAITING_INPUT: [
+                MessageHandler(filters.Regex(r"^Done ✅$"), finish_and_process),
+                MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, collect_data)
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
