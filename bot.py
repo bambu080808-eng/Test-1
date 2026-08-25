@@ -104,7 +104,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count2 = len(context.user_data.get('step2_images', []))
     total = count1 + count2
     
-    status_msg = await update.message.reply_text(
+    await update.message.reply_text(
         f"🎉 Jami **{total} ta** rasm qabul qilindi (Step 1: {count1} ta, Step 2: {count2} ta).\n\n"
         f"⏳ Barcha rasmlar uchun URL havolalar tayyorlanmoqda, kuting...",
         reply_markup=ReplyKeyboardRemove(),
@@ -130,7 +130,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     res_text1 = "🔹 **STEP 1 URLs:**\n" + ("\n".join(step1_urls) if step1_urls else "Rasm yuborilmadi.")
     res_text2 = "🔹 **STEP 2 URLs:**\n" + ("\n".join(step2_urls) if step2_urls else "Rasm yuborilmadi.")
     
-    await status_msg.edit_text("✅ Barcha havolalar tayyor bo'ldi!")
+    await update.message.reply_text("✅ Barcha havolalar tayyor bo'ldi!")
     await update.message.reply_text(res_text1, disable_web_page_preview=True, parse_mode="Markdown")
     await update.message.reply_text(res_text2, disable_web_page_preview=True, parse_mode="Markdown")
     
