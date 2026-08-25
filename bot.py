@@ -17,14 +17,13 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Gemini klienti
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 WAITING_INPUT = range(1)
 LOCK = asyncio.Lock()
 
 SYSTEM_PROMPT = """
-Siz yuborilayotgan ushbu rasmlar e-commerce platformasi (Taobao/Pinduoduo/1688) uchun mahsulotning xarakteristikalari va tavsiflaridir.
+Sana yuborilayotgan ushbu rasmlar e-commerce platformasi (Taobao/Pinduoduo/1688) uchun mahsulotning xarakteristikalari va tavsiflaridir.
 Rasmlardagi barcha matnlarni, jadvallarni va ma'lumotlarni sinchkovlik bilan o'qib chiqib, quyidagi qat'iy qoidalar bo'yicha JSON formatida javob ber:
 
 QOIDALAR:
@@ -33,7 +32,7 @@ QOIDALAR:
 3. KATALOG VA TYPE: 'catalog' va 'type' qiymatlarini faqat tasdiqlangan standart ro'yxat bo'yicha belgilang (Poyabzallar, Kiyim-kechak, Sumka va Aksessuarlar, Uy-ro'zg'or buyumlari, Maishiy texnika va h.k.).
 4. SHARHLAR (REVIEWS): Rasmlardagi ma'lumotlar va mahsulot xususiyatidan kelib chiqib, xaridori juda xursand bo'lgan 6-8 ta har xil va tabiiy chiroyli O'zbekcha sharhlar (text) generatsiya qilib ber.
 
-JAVOBNI QAT'IYAN QUYIDAGI JSON FORMATIDA QAYTAR (ORTIQCHA MATN YOZMA, FAQAT JSON):
+JAVOBNI QAT'IYAN QUYIDAGI JSON FORMATIDA QAYTAR (ORTIQCHA MATN YOZMA):
 
 {
   "price": "20.71",
@@ -127,7 +126,7 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     try:
-        # Gemini uchun kontent tayyorlaymiz (Prompt + Rasmlar)
+        # Prompt va rasmlarni bitta ro'yxatga yig'amiz
         contents = [SYSTEM_PROMPT]
         
         for img_bytes in images_list:
@@ -136,7 +135,7 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "data": img_bytes
             })
 
-        # Gemini modeliga so'rov yuborish
+        # Gemini modeliga so'rov yuboramiz
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=contents,
@@ -146,7 +145,6 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         await update.message.reply_text("✅ Ma'lumotlar muvaffaqiyatli ajratib olindi:")
         
-        # JSON natijani kod bloki ichida toza holda yuboramiz
         if len(result_text) > 4000:
             for i in range(0, len(result_text), 4000):
                 await update.message.reply_text(f"```json\n{result_text[i:i+4000]}\n```", parse_mode="Markdown")
