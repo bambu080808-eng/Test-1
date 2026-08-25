@@ -12,13 +12,11 @@ from telegram.ext import (
     filters,
 )
 
-# Logging sozlmalari
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Gemini SDK klienti
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 WAITING_INPUT = range(1)
@@ -128,7 +126,6 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     try:
-        # Prompt va rasmlarni tayyorlash
         contents = [SYSTEM_PROMPT]
         for img_bytes in images_list:
             contents.append({
@@ -136,7 +133,6 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "data": img_bytes
             })
 
-        # Event loop bloklanishining oldini olish uchun executor orqali chaqiramiz
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None, 
@@ -150,10 +146,12 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         await update.message.reply_text("✅ Ma'lumotlar muvaffaqiyatli ajratib olindi:")
         
-        # 4000 belgidan oshgan JSON larni bo'lib yuborish
-        if len(result_text) > 4000:
-            for i in range(0, len(result_text), 4000):
-                await update.message.reply_text(f"```json\n{result_text[i:i+4000]}\n```", parse_mode="Markdown")
+        # Xabar hajmini xavfsiz (3000 belgidan) bo'laklarga bo'lib yuborish
+        CHUNK_SIZE = 3000
+        if len(result_text) > CHUNK_SIZE:
+            for i in range(0, len(result_text), CHUNK_SIZE):
+                chunk = result_text[i:i+CHUNK_SIZE]
+                await update.message.reply_text(f"```json\n{chunk}\n```", parse_mode="Markdown")
         else:
             await update.message.reply_text(f"```json\n{result_text}\n```", parse_mode="Markdown")
 
