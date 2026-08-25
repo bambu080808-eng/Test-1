@@ -1,6 +1,8 @@
 import os
 import logging
 import asyncio
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 from google import genai
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -12,15 +14,29 @@ from telegram.ext import (
     filters,
 )
 
+# Logging sozlamalari
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+# Gemini SDK klienti
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 WAITING_INPUT = range(1)
 LOCK = asyncio.Lock()
+
+# Render uchun soxta Web Server (Port xatosini bartaraf etadi)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running successfully!")
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
 
 SYSTEM_PROMPT = """
 Sana yuborilayotgan ushbu rasmlar e-commerce platformasi (Taobao/Pinduoduo/1688) uchun mahsulotning xarakteristikalari va tavsiflaridir.
@@ -73,10 +89,8 @@ JAVOBNI QAT'IYAN QUYIDAGI JSON FORMATIDA QAYTAR (ORTIQCHA MATN YOZMA):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['images_list'] = []
-    
     keyboard = [["▶️ Boshlash"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
-    
     if update.message:
         await update.message.reply_text(
             "Salom! Mahsulot skrinshotlarini yuborish uchun **▶️ Boshlash** tugmasini bosing.",
@@ -86,13 +100,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_product_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['images_list'] = []
-    
     keyboard = [["Done ✅"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
-    
     await update.message.reply_text(
-        "📥 Iltimos, mahsulotga tegishli **skrinshotlarni** yuboring "
-        "(albom yoki bittalab ko'rinishda).\n\n"
+        "📥 Iltimos, mahsulotga tegishli **skrinshotlarni** yuboring (albom yoki bittalab ko'rinishda).\n\n"
         "Barcha rasmlarni yuborib bo'lgach, pastdagi **Done ✅** tugmasini bosing.",
         reply_markup=reply_markup,
         parse_mode="Markdown"
@@ -104,7 +115,6 @@ async def collect_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
-        
         async with LOCK:
             context.user_data.setdefault('images_list', []).append(bytes(img_bytes))
 
@@ -146,14 +156,14 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         await update.message.reply_text("✅ Ma'lumotlar muvaffaqiyatli ajratib olindi:")
         
-        # Xabar hajmini xavfsiz (3000 belgidan) bo'laklarga bo'lib yuborish
-        CHUNK_SIZE = 3000
+        # Telegram sig'im xatoligini oldini olish uchun matnni xavfsiz bo'laklarga bo'lib yuborish
+        CHUNK_SIZE = 3500
         if len(result_text) > CHUNK_SIZE:
             for i in range(0, len(result_text), CHUNK_SIZE):
                 chunk = result_text[i:i+CHUNK_SIZE]
-                await update.message.reply_text(f"```json\n{chunk}\n```", parse_mode="Markdown")
+                await update.message.reply_text(chunk)
         else:
-            await update.message.reply_text(f"```json\n{result_text}\n```", parse_mode="Markdown")
+            await update.message.reply_text(result_text)
 
     except Exception as e:
         await update.message.reply_text(f"❌ Xatolik yuz berdi: {str(e)}")
@@ -198,35 +208,7 @@ async def run_bot():
     await asyncio.Event().wait()
 
 def main():
-    try:
-        asyncio.run(run_bot())
-    except (KeyboardInterrupt, SystemExit):
-        pass
-
-if __name__ == '__main__':
-    main()
-
-import os
-import asyncio
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
-
-# Render port talab qilgani uchun soxta Web Server
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is alive!")
-
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
-
-# ... (qolgan kodlaringiz o'z holicha qoladi) ...
-
-def main():
-    # Health check serverni alohida thredda ishga tushirish
+    # Health check serverni fonda yurgizish
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
     try:
