@@ -19,6 +19,7 @@ TOKEN = os.environ.get("BOT_TOKEN") or "7857867174:AAEghTH8fqeItdfZSFbxy1JP9Kytr
 FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY") or "6d207e02198a847aa98d0a2a901485a5"
 
 STEP1, STEP2 = range(2)
+LOCK = asyncio.Lock()
 
 def upload_to_freeimage(img_bytes: bytes) -> str:
     url = "https://freeimage.host/api/1/upload"
@@ -61,12 +62,13 @@ async def start_step1_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def prompt_step1(message_obj, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['step1_images'] = []
+    context.user_data['step2_images'] = []
     
     keyboard = [[InlineKeyboardButton("Next ➡️", callback_data="go_to_step2")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await message_obj.reply_text(
-        "📸 **Step 1:** Iltimos, birinchi bosqich rasmlarini yuboring.\n\n"
+        "📸 **Step 1:** Iltimos, birinchi bosqich rasmlarini yuboring (albom yoki bittalab).\n\n"
         "Rasmlar yuklanib bo'lgach, pastdagi **Next ➡️** tugmasini bosing.",
         reply_markup=reply_markup,
         parse_mode="Markdown"
@@ -78,17 +80,16 @@ async def collect_step1_images(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     
     photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    img_bytes = await file.download_as_bytearray()
-    
-    context.user_data.setdefault('step1_images', []).append(bytes(img_bytes))
+    async with LOCK:
+        file = await context.bot.get_file(photo.file_id)
+        img_bytes = await file.download_as_bytearray()
+        context.user_data.setdefault('step1_images', []).append(bytes(img_bytes))
 
 async def to_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     count1 = len(context.user_data.get('step1_images', []))
-    context.user_data['step2_images'] = []
     
     keyboard = [[InlineKeyboardButton("Done ✅", callback_data="go_to_finish")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -107,10 +108,10 @@ async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYP
         return
         
     photo = update.message.photo[-1]
-    file = await context.bot.get_file(photo.file_id)
-    img_bytes = await file.download_as_bytearray()
-    
-    context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
+    async with LOCK:
+        file = await context.bot.get_file(photo.file_id)
+        img_bytes = await file.download_as_bytearray()
+        context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
 
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
