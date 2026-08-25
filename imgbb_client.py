@@ -1,5 +1,15 @@
+import os
 import uuid
-from config import supabase
+from supabase import create_client, Client
+
+# Muhit o'zgaruvchilaridan (Environment Variables) Supabase kalitlarini olish
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("SUPABASE_URL yoki SUPABASE_KEY kalitlari topilmadi!")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 class ImgbbUploadError(Exception):
     pass
