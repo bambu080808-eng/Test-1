@@ -37,7 +37,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Gemini 2.5 Flash modeliga so'rov yuborish
         prompt = "Ushbu rasmdagi mahsulot nomini aniqlab ber. Faqat mahsulot nomini qisqa va aniq yoz, ortiqcha izoh berma."
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',
             contents=[image, prompt]
         )
         
