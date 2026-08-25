@@ -42,7 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['step2_images'] = []
     
     keyboard = [["▶️ Step 1 ni boshlash"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     if update.message:
         await update.message.reply_text(
@@ -56,7 +56,7 @@ async def start_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['step2_images'] = []
     
     keyboard = [["Next ➡️"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
         "📸 **Step 1:** Iltimos, birinchi bosqich rasmlarini yuboring (albom yoki bittalab).\n\n"
@@ -80,7 +80,7 @@ async def to_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count1 = len(context.user_data.get('step1_images', []))
     
     keyboard = [["Done ✅"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
         f"✅ Step 1 uchun **{count1} ta** rasm qabul qilindi!\n\n"
@@ -139,7 +139,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     restart_keyboard = [["▶️ Step 1 ni boshlash"]]
     await update.message.reply_text(
         "Yangi rasmlar yuklash uchun tugmani bosing:",
-        reply_markup=ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
     )
     
     return ConversationHandler.END
