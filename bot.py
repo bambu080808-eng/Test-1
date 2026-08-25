@@ -205,3 +205,34 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+import os
+import asyncio
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
+
+# Render port talab qilgani uchun soxta Web Server
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
+# ... (qolgan kodlaringiz o'z holicha qoladi) ...
+
+def main():
+    # Health check serverni alohida thredda ishga tushirish
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+    
+    try:
+        asyncio.run(run_bot())
+    except (KeyboardInterrupt, SystemExit):
+        pass
+
+if __name__ == '__main__':
+    main()
