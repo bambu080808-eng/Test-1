@@ -2,13 +2,12 @@ import os
 import logging
 import asyncio
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     CommandHandler,
     MessageHandler,
-    CallbackQueryHandler,
     ConversationHandler,
     filters,
 )
@@ -42,8 +41,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['step1_images'] = []
     context.user_data['step2_images'] = []
     
-    keyboard = [[InlineKeyboardButton("▶️ Step 1 ni boshlash", callback_data="start_step1")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    keyboard = [["▶️ Step 1 ni boshlash"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
     if update.message:
         await update.message.reply_text(
@@ -52,22 +51,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     return ConversationHandler.END
 
-async def start_step1_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    return await prompt_step1(query.message, context)
-
-async def start_step1_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await prompt_step1(update.message, context)
-
-async def prompt_step1(message_obj, context: ContextTypes.DEFAULT_TYPE):
+async def start_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['step1_images'] = []
     context.user_data['step2_images'] = []
     
-    keyboard = [[InlineKeyboardButton("Next ➡️", callback_data="go_to_step2")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    keyboard = [["Next ➡️"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    await message_obj.reply_text(
+    await update.message.reply_text(
         "📸 **Step 1:** Iltimos, birinchi bosqich rasmlarini yuboring (albom yoki bittalab).\n\n"
         "Rasmlar yuklanib bo'lgach, pastdagi **Next ➡️** tugmasini bosing.",
         reply_markup=reply_markup,
@@ -86,15 +77,12 @@ async def collect_step1_images(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.setdefault('step1_images', []).append(bytes(img_bytes))
 
 async def to_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
     count1 = len(context.user_data.get('step1_images', []))
     
-    keyboard = [[InlineKeyboardButton("Done ✅", callback_data="go_to_finish")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    keyboard = [["Done ✅"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
-    await query.message.reply_text(
+    await update.message.reply_text(
         f"✅ Step 1 uchun **{count1} ta** rasm qabul qilindi!\n\n"
         f"📸 **Step 2:** Endi ikkinchi bosqich rasmlarini yuboring.\n\n"
         f"Rasmlarni yuborib bo'lgach, pastdagi **Done ✅** tugmasini bosing.",
@@ -114,16 +102,14 @@ async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
 
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
     count1 = len(context.user_data.get('step1_images', []))
     count2 = len(context.user_data.get('step2_images', []))
     total = count1 + count2
     
-    await query.message.reply_text(
+    status_msg = await update.message.reply_text(
         f"🎉 Jami **{total} ta** rasm qabul qilindi (Step 1: {count1} ta, Step 2: {count2} ta).\n\n"
         f"⏳ Barcha rasmlar uchun URL havolalar tayyorlanmoqda, kuting...",
+        reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
     
@@ -146,20 +132,20 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     res_text1 = "🔹 **STEP 1 URLs:**\n" + ("\n".join(step1_urls) if step1_urls else "Rasm yuborilmadi.")
     res_text2 = "🔹 **STEP 2 URLs:**\n" + ("\n".join(step2_urls) if step2_urls else "Rasm yuborilmadi.")
     
-    await query.message.reply_text("✅ Barcha havolalar tayyor bo'ldi!")
-    await query.message.reply_text(res_text1, disable_web_page_preview=True, parse_mode="Markdown")
-    await query.message.reply_text(res_text2, disable_web_page_preview=True, parse_mode="Markdown")
+    await update.message.reply_text("✅ Barcha havolalar tayyor bo'ldi!")
+    await update.message.reply_text(res_text1, disable_web_page_preview=True, parse_mode="Markdown")
+    await update.message.reply_text(res_text2, disable_web_page_preview=True, parse_mode="Markdown")
     
-    restart_keyboard = [[InlineKeyboardButton("▶️ Step 1 ni boshlash", callback_data="start_step1")]]
-    await query.message.reply_text(
+    restart_keyboard = [["▶️ Step 1 ni boshlash"]]
+    await update.message.reply_text(
         "Yangi rasmlar yuklash uchun tugmani bosing:",
-        reply_markup=InlineKeyboardMarkup(restart_keyboard)
+        reply_markup=ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True)
     )
     
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Jarayon bekor qilindi.")
+    await update.message.reply_text("Jarayon bekor qilindi.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 async def run_bot():
@@ -167,16 +153,16 @@ async def run_bot():
     
     conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(start_step1_cb, pattern="^start_step1$"),
-            CommandHandler("start", start_step1_cmd)
+            MessageHandler(filters.Regex(r"^▶️ Step 1 ni boshlash$"), start_step1),
+            CommandHandler("start", start_step1)
         ],
         states={
             STEP1: [
-                CallbackQueryHandler(to_step2, pattern="^go_to_step2$"),
+                MessageHandler(filters.Regex(r"^Next ➡️$"), to_step2),
                 MessageHandler(filters.PHOTO, collect_step1_images)
             ],
             STEP2: [
-                CallbackQueryHandler(finish, pattern="^go_to_finish$"),
+                MessageHandler(filters.Regex(r"^Done ✅$"), finish),
                 MessageHandler(filters.PHOTO, collect_step2_images)
             ]
         },
