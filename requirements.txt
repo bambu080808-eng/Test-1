@@ -1,6 +1,2 @@
-python-telegram-bot
-requests
-beautifulsoup4
-supabase
-google-genai
-flask 
+python-telegram-bot==21.1.1
+requests==2.31.0
