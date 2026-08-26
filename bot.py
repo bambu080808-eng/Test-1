@@ -224,27 +224,31 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, temperature=0.1)
         loop = asyncio.get_running_loop()
         
-        # Google API serveri band bo'lganda (503 status kelsa) 3 marta qayta urinish
+        # Google Serveri band bo'lganda zaxira modellarga avtomatik o'tish zanjiri
+        models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro']
         response = None
-        for attempt in range(3):
+        
+        for model_name in models_to_try:
             try:
+                logging.info(f"Model sinab ko'rilmoqda: {model_name}")
                 response = await loop.run_in_executor(
-                    None, lambda: client.models.generate_content(
-                        model='gemini-2.5-flash',
+                    None, lambda m=model_name: client.models.generate_content(
+                        model=m,
                         contents=contents, 
                         config=config
                     )
                 )
-                if response:
+                if response and response.text:
                     break
             except Exception as req_err:
-                if "503" in str(req_err) and attempt < 2:
-                    await asyncio.sleep(2)
-                    continue
-                else:
-                    raise req_err
+                logging.warning(f"{model_name} modelida xatolik: {req_err}")
+                await asyncio.sleep(2)
+                continue
 
-        html_result = response.text.strip() if (response and response.text) else "Ma'lumot ajratib bo'lmadi."
+        if not response or not response.text:
+            raise Exception("Google serverlari hozirda juda band. Bir ozdan keyin qayta urinib ko'ring.")
+
+        html_result = response.text.strip()
         
         # Keraksiz markdown ```html teglarni olib tashlash
         if html_result.startswith("```"):
@@ -262,7 +266,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i in range(0, len(html_result), 4000):
                 await update.message.reply_text(html_result[i:i+4000])
 
-        # HTML tayyor fayl sifatida ham yuborish
+        # HTML tayyor fayl sifatida yuborish
         html_bytes = io.BytesIO(html_result.encode('utf-8'))
         html_bytes.name = "product_card.html"
         await update.message.reply_document(document=html_bytes, caption="📄 Tayyor HTML fayl")
