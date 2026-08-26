@@ -73,7 +73,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ]
 
-        # Config sozlamasi yangi SDK shaklida berildi
         config = types.GenerateContentConfig(
             max_output_tokens=100,
             temperature=0.2
@@ -83,7 +82,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = await loop.run_in_executor(
             None, 
             lambda: client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=contents,
                 config=config
             )
@@ -91,11 +90,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         result_text = response.text.strip() if response.text else "Narx aniqlanmadi."
         
-        # Telegram sig'im cheklovi uchun qirqish
         if len(result_text) > 3000:
             result_text = result_text[:3000]
 
-        # parse_mode olib tashlandi (Markdown sintaksis xatolarini oldini olish uchun)
         await status_msg.edit_text(result_text)
 
     except Exception as e:
