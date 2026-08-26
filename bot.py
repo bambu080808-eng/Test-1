@@ -23,11 +23,10 @@ TOKEN = os.environ.get("BOT_TOKEN") or "7857867174:AAEghTH8fqeItdfZSFbxy1JP9Kytr
 FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY") or "6d207e02198a847aa98d0a2a901485a5"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-STEP1, STEP2 = range(2)
+STEP1, STEP2, STEP3 = range(3)
 LOCK = asyncio.Lock()
 YUAN_RATE = 1780 
 
-# Render port xatosi uchun background server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -51,7 +50,6 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     else:
         raise Exception(f"Yuklashda xatolik: {data}")
 
-# AI uchun o'zgarmas qat'iy Prompt (Faqat JSON qaytaradi)
 SYSTEM_PROMPT = """
 Siz e-commerce (Taobao/Pinduoduo/1688) skrinshotlaridan ma'lumot ajratuvchi AI assistentsiz.
 Rasmlardagi matnlarni sinchkovlik bilan o'qib, FAQAT qat'iy JSON formatida javob bering.
@@ -62,7 +60,7 @@ QOIDALAR:
 3. SHARHLAR: Skrinshot va mahsulotdan kelib chiqib 4-6 ta tabiiy O'zbekcha xaridor sharhlarini shakllantiring.
 4. NARX: Skrinshotdagi asosiy narxni (Yuanda, faqat raqam, masalan "23.3") ajrating.
 
-JAVOB QAT'IYAN SHU JSON FORMATIDA BO'LSHI SHART (HECH QANDAY O'RTACHA MATN/MARKDOWN YOZMANGA):
+JAVOB QAT'IYAN SHU JSON FORMATIDA BO'LSHI SHART (ORTIQCHA MATN YOZMANGA):
 {
   "price": "23.3",
   "name": "Mahsulot nomi",
@@ -91,29 +89,32 @@ JAVOB QAT'IYAN SHU JSON FORMATIDA BO'LSHI SHART (HECH QANDAY O'RTACHA MATN/MARKD
 """
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['product_images'] = []
-    context.user_data['review_images'] = []
+    context.user_data['step1_images'] = []
+    context.user_data['step2_images'] = []
+    context.user_data['step3_images'] = []
     
     keyboard = [["▶️ Step 1 ni boshlash"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        "Salom! Mahsulot kartochkalarini HTML shaklida yaratuvchi botga xush kelibsiz.\n\n"
+        "Salom! Mahsulot kartochkalarini yaratuvchi botga xush kelibsiz.\n\n"
         "Boshlash uchun **▶️ Step 1 ni boshlash** tugmasini bosing.",
         reply_markup=reply_markup
     )
     return ConversationHandler.END
 
+# STEP 1: Asosiy rasmlar (FreeImage)
 async def start_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['product_images'] = []
-    context.user_data['review_images'] = []
+    context.user_data['step1_images'] = []
+    context.user_data['step2_images'] = []
+    context.user_data['step3_images'] = []
     
-    keyboard = [["Next ➡️"]]
+    keyboard = [["Next ➡️ (Step 2)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
         "📸 **Step 1:** Mahsulotning **ASOSIY RASMLARINI** yuboring (Gallereya uchun).\n\n"
-        "Tugallagach, **Next ➡️** tugmasini bosing.",
+        "Tugallagach, **Next ➡️ (Step 2)** tugmasini bosing.",
         reply_markup=reply_markup
     )
     return STEP1
@@ -125,18 +126,19 @@ async def collect_step1_images(update: Update, context: ContextTypes.DEFAULT_TYP
     async with LOCK:
         file = await context.bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
-        context.user_data.setdefault('product_images', []).append(bytes(img_bytes))
+        context.user_data.setdefault('step1_images', []).append(bytes(img_bytes))
 
+# STEP 2: Kommentariya rasmlari (FreeImage)
 async def to_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count1 = len(context.user_data.get('product_images', []))
+    count1 = len(context.user_data.get('step1_images', []))
     
-    keyboard = [["Done ✅"]]
+    keyboard = [["Next ➡️ (Step 3)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        f"✅ Mahsulot uchun **{count1} ta** rasm saqlandi.\n\n"
-        f"📸 **Step 2:** Endi narx va **KOMMENTARIYA/SKRINSHOT** rasmlarini yuboring.\n\n"
-        f"Yuborib bo'lgach, **Done ✅** tugmasini bosing.",
+        f"✅ Step 1: **{count1} ta** asosiy rasm qabul qilindi.\n\n"
+        f"📸 **Step 2:** Endi **KOMMENTARIYA/XARIDORLAR RASMLARINI** yuboring.\n\n"
+        f"Tugallagach, **Next ➡️ (Step 3)** tugmasini bosing.",
         reply_markup=reply_markup
     )
     return STEP2
@@ -148,36 +150,65 @@ async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYP
     async with LOCK:
         file = await context.bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
-        context.user_data.setdefault('review_images', []).append(bytes(img_bytes))
+        context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
 
-async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ AI ma'lumotlarni tahlil qilmoqda...", reply_markup=ReplyKeyboardRemove())
+# STEP 3: Ma'lumotlar skrinshoti (Gemini API)
+async def to_step3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    count2 = len(context.user_data.get('step2_images', []))
     
-    # 1. FreeImage'ga ikkala turdagi rasmlarni yuklaymiz
+    keyboard = [["Done ✅"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
+    
+    await update.message.reply_text(
+        f"✅ Step 2: **{count2} ta** kommentariya rasmi qabul qilindi.\n\n"
+        f"📸 **Step 3:** Endi mahsulot **MA'LUMOTLARI VA NARXI** aks etgan skrinshotlarni yuboring (Gemini uchun).\n\n"
+        f"Yuborib bo'lgach, **Done ✅** tugmasini bosing.",
+        reply_markup=reply_markup
+    )
+    return STEP3
+
+async def collect_step3_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        return
+    photo = update.message.photo[-1]
+    async with LOCK:
+        file = await context.bot.get_file(photo.file_id)
+        img_bytes = await file.download_as_bytearray()
+        context.user_data.setdefault('step3_images', []).append(bytes(img_bytes))
+
+# Yakuniy ishlov berish
+async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Rasmlar va ma'lumotlar qayta ishlanmoqda...", reply_markup=ReplyKeyboardRemove())
+    
+    # 1. Step 1 rasmlari FreeImage'ga (Product URLs)
     product_urls = []
-    for img in context.user_data.get('product_images', []):
+    for img in context.user_data.get('step1_images', []):
         try:
             product_urls.append(upload_to_freeimage(img))
         except Exception as e:
-            logging.error(f"Product Image upload error: {e}")
+            logging.error(f"Step 1 upload error: {e}")
 
+    # 2. Step 2 rasmlari FreeImage'ga (Review URLs)
     review_urls = []
-    for img in context.user_data.get('review_images', []):
+    for img in context.user_data.get('step2_images', []):
         try:
             review_urls.append(upload_to_freeimage(img))
         except Exception as e:
-            logging.error(f"Review Image upload error: {e}")
+            logging.error(f"Step 2 upload error: {e}")
 
-    # 2. Gemini API ga Step 2 (skrinshot) rasmlarini uzatib JSON olamiz
+    # 3. Step 3 rasmlari Gemini AI ga yuboriladi
     ai_data = {}
-    review_imgs = context.user_data.get('review_images', [])
+    step3_imgs = context.user_data.get('step3_images', [])
     
-    if review_imgs and GEMINI_API_KEY:
+    if step3_imgs and GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            contents = [{"mime_type": "image/jpeg", "data": review_imgs[0]}]
-            contents.append("Ushbu skrinshotdagi ma'lumotlarni ko'rsatilgan JSON formatida ajratib ber.")
+            contents = []
+            for img in step3_imgs:
+                contents.append({"mime_type": "image/jpeg", "data": img})
+            
+            contents.append("Ushbu skrinshotlardagi barcha ma'lumotlarni ko'rsatilgan JSON formatida ajratib ber.")
             
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
@@ -190,20 +221,18 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             if response and response.text:
-                # JSON ni tozalab olish
                 clean_json_str = re.sub(r'```json\s*|\s*```', '', response.text.strip())
                 ai_data = json.loads(clean_json_str)
         except Exception as e:
-            logging.error(f"Gemini JSON Parsing error: {e}")
+            logging.error(f"Gemini Step 3 Error: {e}")
 
-    # 3. Python ichida narxni so'mga o'giramiz
+    # 4. Narxni so'mga o'girish
     raw_price = float(ai_data.get("price", "0")) if ai_data.get("price") else 0
     price_in_som = f"{int(raw_price * YUAN_RATE):,}".replace(",", " ") if raw_price else "0"
 
-    # 4. Python o'zining HTML Shablonini hosil qiladi
+    # 5. HTML tayyorlash
     product_images_html = "\n".join([f'      <img src="{url}" class="prod-img">' for url in product_urls])
     review_images_html = "\n".join([f'      <img src="{url}" class="rev-img">' for url in review_urls])
-    
     reviews_list_html = "\n".join([f'      <li>{rev}</li>' for rev in ai_data.get("reviews_text", [])])
 
     variants_html = ""
@@ -214,7 +243,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for e_key, e_val in ai_data.get("extras", {}).items():
         extras_html += f"      <p><b>{e_key}:</b> {e_val}</p>\n"
 
-    # YAKUNIY HTML KOD SHABLONI
     html_code = f"""<div class="product-card">
   <h2>{ai_data.get("name", "Mahsulot Nomi")}</h2>
   <span class="price">{price_in_som} so'm</span>
@@ -270,12 +298,16 @@ async def main():
         ],
         states={
             STEP1: [
-                MessageHandler(filters.Regex(r"^Next ➡️$"), to_step2),
+                MessageHandler(filters.Regex(r"^Next ➡️ \(Step 2\)$"), to_step2),
                 MessageHandler(filters.PHOTO, collect_step1_images)
             ],
             STEP2: [
-                MessageHandler(filters.Regex(r"^Done ✅$"), finish),
+                MessageHandler(filters.Regex(r"^Next ➡️ \(Step 3\)$"), to_step3),
                 MessageHandler(filters.PHOTO, collect_step2_images)
+            ],
+            STEP3: [
+                MessageHandler(filters.Regex(r"^Done ✅$"), finish),
+                MessageHandler(filters.PHOTO, collect_step3_images)
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
