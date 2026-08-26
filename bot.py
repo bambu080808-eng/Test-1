@@ -1,10 +1,8 @@
 import os
 import logging
 import asyncio
-import io
 import requests
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
+import re
 from google import genai
 from google.genai import types
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -17,32 +15,18 @@ from telegram.ext import (
     filters,
 )
 
-# Logging sozlamalari
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Kalitlar
-TOKEN = os.environ.get("BOT_TOKEN")
-FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY")
+TOKEN = os.environ.get("BOT_TOKEN") or "7857867174:AAEghTH8fqeItdfZSFbxy1JP9KytrMdS6mgc"
+FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY") or "6d207e02198a847aa98d0a2a901485a5"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Gemini SDK klienti
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Bosqichlar
-STEP1, STEP2, STEP3 = range(3)
+STEP1, STEP2 = range(2)
 LOCK = asyncio.Lock()
 
-# Render Web Service port xatosini oldini olish uchun soxta server
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is active")
-
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
+YUAN_RATE = 1780 
 
 def upload_to_freeimage(img_bytes: bytes) -> str:
     url = "https://freeimage.host/api/1/upload"
@@ -61,218 +45,130 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     else:
         raise Exception(f"Yuklashda xatolik: {data}")
 
-# AI uchun tizim ko'rsatmasi
+# AI uchun sodda prompt - faqat narxni topib beradi
 SYSTEM_PROMPT = """
-Siz — e-commerce platformasi uchun Xitoy marketplace'laridan olingan mahsulot ma'lumotlarini o'zbek tilidagi standart HTML kartochka formatiga to'liq o'girib beruvchi professional AI assistentsiz.
-
-Sizga foydalanuvchi matn shaklida "STEP 1 URL" va "STEP 2 URL" havolalarini beradi, hamda ma'lumotlarni o'qish uchun skrinshotlarni yuklaydi.
-
-QAT'IY QOIDALAR:
-1. BARCHA MA'LUMOTLARNI TO'LIQ QAMRAB OLING: "..." kabi qisqartirishlar QAT'IYAN MAN ETILADI.
-2. RASMLARNI SHABLONGA QAT'IY JOYLASHTIRING:
-   - "STEP 1 URL" dagi BARCHA havolalarni <div class="images"> ichiga <img src="URL"> ko'rinishida joylashtiring. HECH BIRI QOLIB KETMASIN.
-   - "STEP 2 URL" dagi havolalarni sharhlarga mos ravishda <div class="review-images"> ichiga <img src="URL"> ko'rinishida joylashtiring.
-3. TIL SIFATI: Sof, ravon o'zbek tilidan foydalaning.
-4. Xira (sotuvdan chiqqan) variantlarni <div class="variant"> ichiga qo'shmang.
-5. Sharh muallifiga tasodifiy "ID: 10 xonali raqam" bering.
-
-STANDART HTML SHABLON STRUKTURASI (Faqat toza HTML kodi qaytaring, ortiqcha izoh yozmang):
-<div class="product">
-  <div class="images">
-    <img src="STEP_1_URL_1">
-    <img src="STEP_1_URL_2">
-  </div>
-  <span class="price">0.00</span>
-  <h2 class="name">Mahsulot nomi (O'zbek tilida)</h2>
-  <div class="variant" data-type="Rang">
-    <span>Mavjud rang 1</span>
-  </div>
-  <div class="variant" data-type="Olcham">
-    <span>Mavjud o'lcham</span>
-  </div>
-  <p class="desc">Mahsulot haqida batafsil ma'lumot...</p>
-  <span class="catalog">Katalog nomi</span>
-  <span class="type">Mahsulot turi</span>
-  <div class="stats">
-    <span data-key="rating">4.8</span>
-    <span data-key="reviews">100</span>
-    <span data-key="views">1000</span>
-    <span data-key="likes">500</span>
-    <span data-key="sold">200</span>
-  </div>
-  <div class="extra" data-key="Xususiyat">Qiymat</div>
-  <div class="review">
-    <span class="author">ID: 1234567890</span>
-    <span class="text">Sharh matni...</span>
-    <div class="review-images">
-      <img src="STEP_2_URL_1">
-    </div>
-  </div>
-</div>
+Siz skrinshotdan mahsulot narxini aniqlaydigan AI assistentsiz.
+Skrinshotdagi asosiy narxni toping va FAQAT raqamni qaytaring (masalan: 25.5 yoki 120). 
+Hech qanday valyuta belgisi yoki so'z yozmang.
 """
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['step1_images'] = []
+    context.user_data['step2_images'] = []
+    
     keyboard = [["▶️ Step 1 ni boshlash"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        "Salom! Men mahsulot rasmlarini URL'ga aylantirib, ma'lumotlardan to'liq HTML kartochka yasab beruvchi botman.\n\n"
-        "Jarayonni boshlash uchun pastdagi **▶️ Step 1 ni boshlash** tugmasini bosing.",
+        "Salom! Mahsulot rasmlari va narxidan sodda HTML kod yaratuvchi botga xush kelibsiz.\n\n"
+        "Boshlash uchun **▶️ Step 1 ni boshlash** tugmasini bosing.",
         reply_markup=reply_markup
     )
+    return ConversationHandler.END
 
 async def start_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['step1_images'] = []
     context.user_data['step2_images'] = []
-    context.user_data['step3_images'] = []
     
-    keyboard = [["Next: Step 2 ➡️"]]
+    keyboard = [["Next ➡️"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        "📸 **Step 1:** Asosiy mahsulot rasmlarini yuboring.\n\n"
-        "Rasmlarni yuborib bo'lgach, **Next: Step 2 ➡️** tugmasini bosing.",
+        "📸 **Step 1:** Mahsulotning asl rasmlarini yuboring.\n\n"
+        "Tugallagach, **Next ➡️** tugmasini bosing.",
         reply_markup=reply_markup
     )
     return STEP1
 
-async def collect_images(update: Update, context: ContextTypes.DEFAULT_TYPE, step_key: str):
+async def collect_step1_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
         return
     photo = update.message.photo[-1]
     async with LOCK:
         file = await context.bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
-        context.user_data.setdefault(step_key, []).append(bytes(img_bytes))
+        context.user_data.setdefault('step1_images', []).append(bytes(img_bytes))
 
-async def collect_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await collect_images(update, context, 'step1_images')
-
-async def start_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count = len(context.user_data.get('step1_images', []))
-    keyboard = [["Next: Step 3 ➡️"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
+async def to_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    count1 = len(context.user_data.get('step1_images', []))
     
-    await update.message.reply_text(
-        f"✅ Step 1 (Asosiy rasmlar): {count} ta rasm qabul qilindi.\n\n"
-        "📸 **Step 2:** Sharh (otziv) rasmlarini yuboring.\n\n"
-        "Rasmlarni yuborib bo'lgach, **Next: Step 3 ➡️** tugmasini bosing.",
-        reply_markup=reply_markup
-    )
-    return STEP2
-
-async def collect_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await collect_images(update, context, 'step2_images')
-
-async def start_step3(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count = len(context.user_data.get('step2_images', []))
     keyboard = [["Done ✅"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        f"✅ Step 2 (Sharh rasmlari): {count} ta rasm qabul qilindi.\n\n"
-        "📸 **Step 3:** Ma'lumotlarni o'qib olish uchun skrinshotlarni yuboring (xususiyatlar, narx, sharh matnlari).\n\n"
-        "Rasmlarni yuborib bo'lgach, **Done ✅** tugmasini bosing.",
+        f"✅ Step 1 uchun **{count1} ta** rasm qabul qilindi.\n\n"
+        f"📸 **Step 2:** Endi narxi ko'ringan skrinshot rasmini yuboring.\n\n"
+        f"Yuborib bo'lgach, **Done ✅** tugmasini bosing.",
         reply_markup=reply_markup
     )
-    return STEP3
+    return STEP2
 
-async def collect_step3(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await collect_images(update, context, 'step3_images')
+async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        return
+    photo = update.message.photo[-1]
+    async with LOCK:
+        file = await context.bot.get_file(photo.file_id)
+        img_bytes = await file.download_as_bytearray()
+        context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
 
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    count3 = len(context.user_data.get('step3_images', []))
+    await update.message.reply_text("⏳ HTML kod tayyorlanmoqda...", reply_markup=ReplyKeyboardRemove())
     
-    await update.message.reply_text(
-        f"✅ Step 3 (Skrinshotlar): {count3} ta rasm qabul qilindi.\n\n"
-        "⏳ **1-qadam:** Rasmlar FreeImage host xizmatiga yuklanmoqda...",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    # Step 1 va Step 2 rasmlarini URL ga o'girish
-    step1_urls, step2_urls = [], []
+    # 1. FreeImage ga rasmlarni yuklash
+    step1_urls = []
     for img in context.user_data.get('step1_images', []):
         try:
-            step1_urls.append(upload_to_freeimage(img))
+            url = upload_to_freeimage(img)
+            step1_urls.append(url)
         except Exception as e:
-            logging.error(f"Step 1 yuklash xatosi: {e}")
+            logging.error(f"FreeImage xatosi: {e}")
 
-    for img in context.user_data.get('step2_images', []):
+    # 2. Skrinshotdan narxni aniqlash va so'mga o'girish
+    price_in_som = "0"
+    step2_imgs = context.user_data.get('step2_images', [])
+    
+    if step2_imgs:
         try:
-            step2_urls.append(upload_to_freeimage(img))
-        except Exception as e:
-            logging.error(f"Step 2 yuklash xatosi: {e}")
-
-    await update.message.reply_text("⏳ **2-qadam:** Gemini API skrinshotlar va havolalarni tahlil qilmoqda...")
-
-    try:
-        contents = []
-        
-        urls_instruction = "SIZGA YUBORILAYOTGAN TAYYOR RASM HAVOLALARI:\n\n"
-        urls_instruction += "STEP 1 URL (Asosiy rasmlar galereyasi uchun <div class=\"images\"> ichiga qo'ying):\n"
-        urls_instruction += "\n".join(step1_urls) if step1_urls else "Mavjud emas"
-        urls_instruction += "\n\nSTEP 2 URL (Sharhlar uchun <div class=\"review-images\"> ichiga qo'ying):\n"
-        urls_instruction += "\n".join(step2_urls) if step2_urls else "Mavjud emas"
-        
-        urls_instruction += "\n\nDIQQAT: Yuqoridagi barcha URL'larni taqdim etilgan HTML strukturadagi tegishli <img> teglariga to'liq joylashtiring!"
-
-        contents.append(urls_instruction)
-        
-        for img in context.user_data.get('step3_images', []):
-            contents.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
-
-        config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, temperature=0.1)
-        loop = asyncio.get_running_loop()
-        
-        # Google Serveri band bo'lganda zaxira modellarga avtomatik o'tish zanjiri
-        models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-pro']
-        response = None
-        
-        for model_name in models_to_try:
-            try:
-                logging.info(f"Model sinab ko'rilmoqda: {model_name}")
-                response = await loop.run_in_executor(
-                    None, lambda m=model_name: client.models.generate_content(
-                        model=m,
-                        contents=contents, 
-                        config=config
+            contents = [types.Part.from_bytes(data=step2_imgs[0], mime_type="image/jpeg")]
+            config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, temperature=0.1)
+            
+            loop = asyncio.get_running_loop()
+            models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
+            response = None
+            
+            for model_name in models_to_try:
+                try:
+                    response = await loop.run_in_executor(
+                        None, lambda m=model_name: client.models.generate_content(model=m, contents=contents, config=config)
                     )
-                )
-                if response and response.text:
-                    break
-            except Exception as req_err:
-                logging.warning(f"{model_name} modelida xatolik: {req_err}")
-                await asyncio.sleep(2)
-                continue
+                    if response and response.text:
+                        break
+                except Exception:
+                    continue
 
-        if not response or not response.text:
-            raise Exception("Google serverlari hozirda juda band. Bir ozdan keyin qayta urinib ko'ring.")
+            if response and response.text:
+                match = re.search(r"[-+]?\d*\.\d+|\d+", response.text.strip())
+                if match:
+                    price_val = float(match.group())
+                    som_val = int(price_val * YUAN_RATE)
+                    price_in_som = f"{som_val:,}".replace(",", " ")
+        except Exception as e:
+            logging.error(f"Gemini xatosi: {e}")
 
-        html_result = response.text.strip()
-        
-        # Keraksiz markdown ```html teglarni olib tashlash
-        if html_result.startswith("```"):
-            lines = html_result.splitlines()
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            html_result = "\n".join(lines).strip()
+    # 3. HTML shablonini shakllantirish
+    images_html = "\n".join([f'    <img src="{url}">' for url in step1_urls])
+    
+    html_code = f"""<div class="product">
+  <div class="images">
+{images_html}
+  </div>
+  <span class="price">{price_in_som} so'm</span>
+</div>"""
 
-        # HTML matn ko'rinishida yuborish
-        if len(html_result) <= 4000:
-            await update.message.reply_text(html_result)
-        else:
-            for i in range(0, len(html_result), 4000):
-                await update.message.reply_text(html_result[i:i+4000])
-
-        # HTML tayyor fayl sifatida yuborish
-        html_bytes = io.BytesIO(html_result.encode('utf-8'))
-        html_bytes.name = "product_card.html"
-        await update.message.reply_document(document=html_bytes, caption="📄 Tayyor HTML fayl")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Xatolik yuz berdi: {str(e)}")
+    # Natijani HTML kod formatida yuborish
+    final_response = f"```html\n{html_code}\n```"
+    await update.message.reply_text(final_response, parse_mode="Markdown")
 
     restart_keyboard = [["▶️ Step 1 ni boshlash"]]
     await update.message.reply_text(
@@ -286,24 +182,21 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
-    threading.Thread(target=run_health_check_server, daemon=True).start()
-    
     application = ApplicationBuilder().token(TOKEN).build()
     
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r"^▶️ Step 1 ni boshlash$"), start_step1)],
+        entry_points=[
+            MessageHandler(filters.Regex(r"^▶️ Step 1 ni boshlash$"), start_step1),
+            CommandHandler("start", start_step1)
+        ],
         states={
             STEP1: [
-                MessageHandler(filters.Regex(r"^Next: Step 2 ➡️$"), start_step2),
-                MessageHandler(filters.PHOTO, collect_step1)
+                MessageHandler(filters.Regex(r"^Next ➡️$"), to_step2),
+                MessageHandler(filters.PHOTO, collect_step1_images)
             ],
             STEP2: [
-                MessageHandler(filters.Regex(r"^Next: Step 3 ➡️$"), start_step3),
-                MessageHandler(filters.PHOTO, collect_step2)
-            ],
-            STEP3: [
                 MessageHandler(filters.Regex(r"^Done ✅$"), finish),
-                MessageHandler(filters.PHOTO, collect_step3)
+                MessageHandler(filters.PHOTO, collect_step2_images)
             ]
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
