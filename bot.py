@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from google import genai
@@ -36,22 +37,18 @@ def run_health_check_server():
     server.serve_forever()
 
 SYSTEM_PROMPT = """
-Sana e-commerce platformasidan (Taobao/Pinduoduo/1688) olingan mahsulot rasmi yuboriladi.
-Sening yagona vazifang:
-1. Rasmdagi mahsulot narxini topish (odatda Yuan/¥ da berilgan bo'ladi).
-2. Ushbu narxni O'zbekiston so'miga taxminiy o'girish (1 Yuan = 1800 so'm nisbatida).
-3. Faqat va faqat quyidagi formatda qisqa va aniq javob berish (ortiqcha hech narsa yozma):
-
-💰 Mahsulot narxi:
-• Yuan: [topilgan narx] ¥
-• So'mda: [hisoblangan narx] so me
-
-Misol uchun:
-💰 Mahsulot narxi:
-• Yuan: 23.3 ¥
-• So'mda: 41,940 so'm
-
-Agar rasmda narx topilmasa: "❌ Rasmda narx ko'rinmadi, iltimos narxi aniq ko'ringan rasm yuboring." deb javob ber.
+Sana e-commerce platformasidan olingan rasm yuboriladi.
+Rasmdagi mahsulot narxini top (Yuan/¥ da) va uni O'zbekiston so'miga o'gir (1 Yuan = 1800 so'm nisbatida).
+Javobni faqat va faqat JSON formatida qaytar:
+{
+  "yuan": "23.3",
+  "som": "41,940",
+  "found": true
+}
+Agar narx topilmasa:
+{
+  "found": false
+}
 """
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,17 +63,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         img_bytes = await file.download_as_bytearray()
 
         contents = [
-            SYSTEM_PROMPT,
             types.Part.from_bytes(
                 data=bytes(img_bytes),
                 mime_type="image/jpeg",
             )
         ]
 
-        # Javob kesilib qolmasligi uchun tokenlar soni 300 ga oshirildi
+        # JSON structured output sozlamasi
         config = types.GenerateContentConfig(
-            max_output_tokens=300,
-            temperature=0.2
+            system_instruction=SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            temperature=0.1
         )
 
         loop = asyncio.get_running_loop()
@@ -89,12 +86,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
 
-        result_text = response.text.strip() if response.text else "Narx aniqlanmadi."
+        # JSON javobni qayta ishlash
+        data = json.loads(response.text)
         
-        if len(result_text) > 3000:
-            result_text = result_text[:3000]
+        if data.get("found"):
+            yuan = data.get("yuan", "—")
+            som = data.get("som", "—")
+            
+            result_text = f"💰 **Mahsulot narxi:**\n• Yuan: {yuan} ¥\n• So'mda: {som} so'm"
+        else:
+            result_text = "❌ Rasmda narx ko'rinmadi, iltimos narxi aniq ko'ringan rasm yuboring."
 
-        await status_msg.edit_text(result_text)
+        await status_msg.edit_text(result_text, parse_mode="Markdown")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}")
