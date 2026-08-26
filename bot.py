@@ -4,17 +4,16 @@ import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from google import genai
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     CommandHandler,
     MessageHandler,
-    ConversationHandler,
     filters,
 )
 
-# Logging sozlamalari
+# Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -23,15 +22,12 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # Gemini SDK klienti
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-WAITING_INPUT = range(1)
-LOCK = asyncio.Lock()
-
-# Render uchun soxta Web Server (Port xatosini bartaraf etadi)
+# Render port xatosi bermasligi uchun soxta server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running successfully!")
+        self.wfile.write(b"Bot is active")
 
 def run_health_check_server():
     port = int(os.environ.get("PORT", 8080))
@@ -39,110 +35,45 @@ def run_health_check_server():
     server.serve_forever()
 
 SYSTEM_PROMPT = """
-Sana yuborilayotgan ushbu rasmlar e-commerce platformasi (Taobao/Pinduoduo/1688) uchun mahsulotning xarakteristikalari va tavsiflaridir.
-Rasmlardagi barcha matnlarni, jadvallarni va ma'lumotlarni sinchkovlik bilan o'qib chiqib, quyidagi qat'iy qoidalar bo'yicha JSON formatida javob ber:
+Sana e-commerce platformasidan (Taobao/Pinduoduo/1688) olingan mahsulot rasmi yuboriladi.
+Sening yagona vazifang:
+1. Rasmdagi mahsulot narxini topish (odatda Yuan/¥ da berilgan bo'ladi).
+2. Ushbu narxni O'zbekiston so'miga taxminiy o'girish (1 Yuan = 1800 so'm nisbatida).
+3. Faqat va faqat quyidagi formatda qisqa javob berish:
 
-QOIDALAR:
-1. TIL VA TARJIMA: Barcha matnlar, xususiyatlar, tavsif va sharhlar faqat va faqat sof, ravon va tushunarli O'zbek tilida bo'lishi shart. Inglizcha yoki xitoycha so'z va atamalardan foydalanma (masalan: "Printed" -> "Naqshli", "Slip-on" -> "Yengil kiyiladigan poyabzal", "Rubber" -> "Kauchuk/Rezina").
-2. VARIANT VA O'LCHAMLAR: Variant rasmlari yoki skrinshotlarini sinchkovlik bilan tahlil qil. Faqat sotuvda bor (faol, to'q shriftli) rang va o'lchamlarni ajratib ol. Xira, tugmasi faolsizlashtirilgan yoki tugagan variantlarni BUTUNLAY CHIQARIB TASHLA.
-3. KATALOG VA TYPE: 'catalog' va 'type' qiymatlarini faqat tasdiqlangan standart ro'yxat bo'yicha belgilang (Poyabzallar, Kiyim-kechak, Sumka va Aksessuarlar, Uy-ro'zg'or buyumlari, Maishiy texnika va h.k.).
-4. SHARHLAR (REVIEWS): Rasmlardagi ma'lumotlar va mahsulot xususiyatidan kelib chiqib, xaridori juda xursand bo'lgan 6-8 ta har xil va tabiiy chiroyli O'zbekcha sharhlar (text) generatsiya qilib ber.
+💰 **Mahsulot narxi:**
+• Yuan: [topilgan narx] ¥
+• So'mda: [hisoblangan narx] so'm
 
-JAVOBNI QAT'IYAN QUYIDAGI JSON FORMATIDA QAYTAR (ORTIQCHA MATN YOZMA):
+Misol uchun:
+💰 **Mahsulot narxi:**
+• Yuan: 23.3 ¥
+• So'mda: 41,940 so'm
 
-{
-  "price": "20.71",
-  "name": "Mahsulotning o'zbekcha nomi",
-  "catalog": "Poyabzallar",
-  "type": "Ayollar poyabzali",
-  "description": "Mahsulot haqida batafsil va jozibador O'zbekcha tavsif...",
-  "variants": {
-    "Rang": ["Oq", "Moviy", "Xaki"],
-    "Olcham": ["35", "36", "37", "38", "39", "40"]
-  },
-  "stats": {
-    "rating": "4.9",
-    "reviews": "7000",
-    "views": "15000",
-    "likes": "7669",
-    "sold": "9436"
-  },
-  "extras": {
-    "Brend": "KaiQi",
-    "Ustki material": "PU teri",
-    "Taglik materiali": "Kauchuk / Rezina",
-    "Uslub": "Kundalik / Sport",
-    "Poshta balandligi": "3cm-5cm",
-    "Yopilish turi": "Bog'ichli (Ipli)"
-  },
-  "reviews_text": [
-    "Oq krossovkalarni qabul qilib oldim va kiyib ko'rdim. O'lchami juda mos keldi, dizayni ajoyib!",
-    "Poyabzal juda bejirim va oyoqqa juda mos keladi. Qalin tagligi sirpanishga qarshi yaxshi...",
-    "Bu poyabzallar juda go'zal va kiyishga juda qulay. Ajoyib juftlik!",
-    "Bu poyabzalni olib hayratda qoldim! Sifatli tikilgan, ortiqcha iplari yo'q.",
-    "Juda qulay va zamonaviy, tavsiya qilaman!",
-    "Toza, yangi va kiyishga qulay. Narxiga to'liq arziydi!"
-  ],
-  "instagram_caption": "💣 Ayollar uchun yangi va zamonaviy krossovkalar!..."
-}
+Agar rasmda narx topilmasa: "❌ Rasmda narx ko'rinmadi, iltimos narxi aniq ko'ringan rasm yuboring." deb javob ber.
 """
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['images_list'] = []
-    keyboard = [["▶️ Boshlash"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
-    if update.message:
-        await update.message.reply_text(
-            "Salom! Mahsulot skrinshotlarini yuborish uchun **▶️ Boshlash** tugmasini bosing.",
-            reply_markup=reply_markup
-        )
-    return ConversationHandler.END
+    await update.message.reply_text("Salom! Menga mahsulot skrinshotini yuboring, men narxini so'mda hisoblab beraman.")
 
-async def ask_product_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['images_list'] = []
-    keyboard = [["Done ✅"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
-    await update.message.reply_text(
-        "📥 Iltimos, mahsulotga tegishli **skrinshotlarni** yuboring (albom yoki bittalab ko'rinishda).\n\n"
-        "Barcha rasmlarni yuborib bo'lgach, pastdagi **Done ✅** tugmasini bosing.",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
-    return WAITING_INPUT
-
-async def collect_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.photo:
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text("⏳ Narx tahlil qilinmoqda...")
+    
+    try:
+        # Eng yuqori sifatdagi rasmni olish
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
-        async with LOCK:
-            context.user_data.setdefault('images_list', []).append(bytes(img_bytes))
 
-async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    images_list = context.user_data.get('images_list', [])
-    total_sent = len(images_list)
-    
-    if total_sent == 0:
-        await update.message.reply_text("⚠️ Siz hali hech qanday rasm yubormadingiz!")
-        return WAITING_INPUT
-
-    await update.message.reply_text(
-        f"📊 **Hisobot:**\n"
-        f"• Yuborilgan rasmlar: **{total_sent} ta**\n"
-        f"• Qabul qilib olindi: **{total_sent} ta**\n\n"
-        f"⏳ Ma'lumotlar tahlil qilinmoqda, iltimos kuting...",
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode="Markdown"
-    )
-
-    try:
-        contents = [SYSTEM_PROMPT]
-        for img_bytes in images_list:
-            contents.append({
+        contents = [
+            SYSTEM_PROMPT,
+            {
                 "mime_type": "image/jpeg",
-                "data": img_bytes
-            })
+                "data": bytes(img_bytes)
+            }
+        ]
 
+        # Gemini so'rovini fonda bajaramiz
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None, 
@@ -151,55 +82,17 @@ async def finish_and_process(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 contents=contents,
             )
         )
-        
-        result_text = response.text
 
-        await update.message.reply_text("✅ Ma'lumotlar muvaffaqiyatli ajratib olindi:")
-        
-        # Telegram sig'im xatoligini oldini olish uchun matnni xavfsiz bo'laklarga bo'lib yuborish
-        CHUNK_SIZE = 3500
-        if len(result_text) > CHUNK_SIZE:
-            for i in range(0, len(result_text), CHUNK_SIZE):
-                chunk = result_text[i:i+CHUNK_SIZE]
-                await update.message.reply_text(chunk)
-        else:
-            await update.message.reply_text(result_text)
+        await status_msg.edit_text(response.text, parse_mode="Markdown")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Xatolik yuz berdi: {str(e)}")
-
-    restart_keyboard = [["▶️ Boshlash"]]
-    await update.message.reply_text(
-        "Yangi mahsulot kiritish uchun quyidagi tugmani bosing:",
-        reply_markup=ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
-    )
-    
-    return ConversationHandler.END
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Jarayon bekor qilindi.", reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
+        await status_msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}")
 
 async def run_bot():
     application = ApplicationBuilder().token(TOKEN).build()
     
-    conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex(r"^▶️ Boshlash$"), ask_product_info),
-            CommandHandler("start", ask_product_info)
-        ],
-        states={
-            WAITING_INPUT: [
-                MessageHandler(filters.Regex(r"^Done ✅$"), finish_and_process),
-                MessageHandler(filters.PHOTO, collect_photos)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
-        allow_reentry=True
-    )
-
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler)
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     
     await application.initialize()
     await application.start()
@@ -208,7 +101,7 @@ async def run_bot():
     await asyncio.Event().wait()
 
 def main():
-    # Health check serverni fonda yurgizish
+    # Render port tekshiruvi uchun serverni ishga tushirish
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
     try:
