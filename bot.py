@@ -44,7 +44,7 @@ Sening yagona vazifang:
 
 💰 Mahsulot narxi:
 • Yuan: [topilgan narx] ¥
-• So'mda: [hisoblangan narx] so'm
+• So'mda: [hisoblangan narx] so me
 
 Misol uchun:
 💰 Mahsulot narxi:
@@ -73,8 +73,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ]
 
+        # Javob kesilib qolmasligi uchun tokenlar soni 300 ga oshirildi
         config = types.GenerateContentConfig(
-            max_output_tokens=100,
+            max_output_tokens=300,
             temperature=0.2
         )
 
