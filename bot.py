@@ -6,7 +6,6 @@ import re
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
-from google.genai import types
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
@@ -23,14 +22,11 @@ TOKEN = os.environ.get("BOT_TOKEN") or "7857867174:AAEghTH8fqeItdfZSFbxy1JP9Kytr
 FREEIMAGE_API_KEY = os.environ.get("FREEIMAGE_API_KEY") or "6d207e02198a847aa98d0a2a901485a5"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
-
 STEP1, STEP2 = range(2)
 LOCK = asyncio.Lock()
 
 YUAN_RATE = 1780 
 
-# Render port xatosini oldini olish uchun Background Web Server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -60,9 +56,9 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
         raise Exception(f"Yuklashda xatolik: {data}")
 
 SYSTEM_PROMPT = """
-Siz skrinshotdan mahsulot narxini aniqlaydigan AI assistentsiz.
-Skrinshotdagi asosiy narxni toping va FAQAT raqamni qaytaring (masalan: 25.5 yoki 120). 
-Hech qanday valyuta belgisi yoki so'z yozmang.
+Skrinshotdagi asosiy sotuv narxini toping.
+FAQAT VA FAQAT raqamni qaytaring (masalan: 23.3). 
+Hech qanday valyuta belgisi (¥, $), so'z yoki qo'shimcha text yozmang!
 """
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -128,6 +124,7 @@ async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYP
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ HTML kod tayyorlanmoqda...", reply_markup=ReplyKeyboardRemove())
     
+    # 1. FreeImage rasmlarni yuklash
     step1_urls = []
     for img in context.user_data.get('step1_images', []):
         try:
@@ -136,36 +133,41 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"FreeImage xatosi: {e}")
 
+    # 2. Gemini orqali narxni aniqlash
     price_in_som = "0"
     step2_imgs = context.user_data.get('step2_images', [])
     
-    if step2_imgs:
+    if step2_imgs and GEMINI_API_KEY:
         try:
-            contents = [types.Part.from_bytes(data=step2_imgs[0], mime_type="image/jpeg")]
-            config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, temperature=0.1)
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            
+            # Gemini'ga rasm va textni bitta massivda uzatamiz
+            contents = [
+                SYSTEM_PROMPT,
+                {"mime_type": "image/jpeg", "data": step2_imgs[0]}
+            ]
             
             loop = asyncio.get_running_loop()
-            models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
-            response = None
             
-            for model_name in models_to_try:
-                try:
-                    response = await loop.run_in_executor(
-                        None, lambda m=model_name: client.models.generate_content(model=m, contents=contents, config=config)
-                    )
-                    if response and response.text:
-                        break
-                except Exception:
-                    continue
+            # Model orqali murojaat qilish
+            response = await loop.run_in_executor(
+                None, 
+                lambda: client.models.generate_content(
+                    model='gemini-2.5-flash', 
+                    contents=contents
+                )
+            )
 
             if response and response.text:
-                match = re.search(r"[-+]?\d*\.\d+|\d+", response.text.strip())
+                logging.info(f"Gemini javobi: {response.text}")
+                # Raqamni ajratib olish (masalan 23.3)
+                match = re.search(r"\d+(\.\d+)?", response.text.strip())
                 if match:
                     price_val = float(match.group())
                     som_val = int(price_val * YUAN_RATE)
                     price_in_som = f"{som_val:,}".replace(",", " ")
         except Exception as e:
-            logging.error(f"Gemini xatosi: {e}")
+            logging.error(f"Gemini chaqirishda xatolik: {e}")
 
     images_html = "\n".join([f'    <img src="{url}">' for url in step1_urls])
     
@@ -191,7 +193,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def main():
-    # Background serverni ishga tushirish
     threading.Thread(target=run_health_check_server, daemon=True).start()
 
     application = ApplicationBuilder().token(TOKEN).build()
@@ -218,12 +219,9 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     
-    # Event loop ni qo'lda ishga tushirish (Render muhiti uchun to'g'ri yechim)
     await application.initialize()
     await application.start()
     await application.updater.start_polling(drop_pending_updates=True)
-    
-    # Bot to'xtab qolmasligi uchun kutish holati
     await asyncio.Event().wait()
 
 if __name__ == '__main__':
