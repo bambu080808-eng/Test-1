@@ -190,45 +190,39 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     restart_keyboard = [["▶️ Step 1 ni boshlash"]]
     reply_markup_restart = ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
 
-    await update.message.reply_text("📸 Rasmlar FreeImage serveriga yuklanmoqda...", reply_markup=ReplyKeyboardRemove())
+    # Status 1: Rasmlarni yuklash
+    status_msg = await update.message.reply_text("📸 Rasmlar FreeImage serveriga yuklanmoqda...", reply_markup=ReplyKeyboardRemove())
     
-    product_urls = []
-    for idx, img in enumerate(context.user_data.get('step1_images', []), 1):
-        try:
+    try:
+        product_urls = []
+        for idx, img in enumerate(context.user_data.get('step1_images', []), 1):
             url = upload_to_freeimage(img)
             product_urls.append(url)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Muammo: Step 1 dagi {idx}-rasmni yuklashda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
-            return ConversationHandler.END
 
-    review_urls = []
-    for idx, img in enumerate(context.user_data.get('step2_images', []), 1):
-        try:
+        review_urls = []
+        for idx, img in enumerate(context.user_data.get('step2_images', []), 1):
             url = upload_to_freeimage(img)
             review_urls.append(url)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Muammo: Step 2 dagi {idx}-rasmni yuklashda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
-            return ConversationHandler.END
+    except Exception as e:
+        await update.message.reply_text(f"❌ FreeImage yuklashda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
+        return ConversationHandler.END
 
     step3_imgs = context.user_data.get('step3_images', [])
     if not step3_imgs:
-        await update.message.reply_text("❌ Muammo: Step 3 da hech qanday skrinshot yuborilmadi!", reply_markup=reply_markup_restart)
+        await update.message.reply_text("❌ Step 3 da hech qanday skrinshot yuborilmadi!", reply_markup=reply_markup_restart)
         return ConversationHandler.END
 
     if not GEMINI_API_KEY:
-        await update.message.reply_text("❌ Muammo: GEMINI_API_KEY o'zgaruvchisi o'rnatilmagan!", reply_markup=reply_markup_restart)
+        await update.message.reply_text("❌ GEMINI_API_KEY o'zgaruvchisi topilmadi!", reply_markup=reply_markup_restart)
         return ConversationHandler.END
 
-    await update.message.reply_text("🤖 Step 3 rasmlari Gemini AI ga jo'natildi. Javob kutilmoqda...")
+    # Status 2: AI ga so'rov jo'natildi
+    await status_msg.edit_text("🤖 Step 3 rasmlari Gemini AI ga jo'natildi. Tahlil qilinmoqda...")
 
     ai_data = {}
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        
-        contents = []
-        for img in step3_imgs:
-            contents.append({"mime_type": "image/jpeg", "data": img})
-        
+        contents = [{"mime_type": "image/jpeg", "data": img} for img in step3_imgs]
         contents.append("Ushbu skrinshotlardagi barcha ma'lumotlarni ko'rsatilgan JSON formatida ajratib ber.")
         
         loop = asyncio.get_running_loop()
@@ -248,10 +242,11 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise Exception("Gemini API dan bo'sh javob qaytdi.")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Muammo: Gemini AI tahlil qilishda xatolik berdi:\n`{e}`", reply_markup=reply_markup_restart)
+        await update.message.reply_text(f"❌ Gemini AI tahlilida xatolik yuz berdi:\n`{e}`", reply_markup=reply_markup_restart)
         return ConversationHandler.END
 
-    await update.message.reply_text("⚡ AI javob qaytardi! HTML shablon shakllantirilmoqda...")
+    # Status 3: AI javob berdi, fayl tayyorlanmoqda
+    await status_msg.edit_text("⚡ AI javob qaytardi! HTML fayli shakllantirilmoqda...")
 
     try:
         raw_price = float(ai_data.get("price", "0")) if ai_data.get("price") else 0
@@ -312,6 +307,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
   </div>
 </div>"""
 
+        # RAM ichida HTML fayl yasab Telegram ga yuborish
         html_file = io.BytesIO(html_code.encode('utf-8'))
         html_file.name = "product_card.html"
         
@@ -328,7 +324,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup_restart
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ Muammo: HTML kodni shakllantirishda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
+        await update.message.reply_text(f"❌ HTML faylni yaratish va yuborishda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
 
     return ConversationHandler.END
 
