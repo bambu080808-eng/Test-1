@@ -30,7 +30,7 @@ LOCK = asyncio.Lock()
 
 YUAN_RATE = 1780 
 
-# Render port xatosini oldini olish uchun soxta server
+# Render port xatosini oldini olish uchun Background Web Server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -190,8 +190,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Jarayon bekor qilindi.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-def main():
-    # Render uchun background serverni ishga tushirish
+async def main():
+    # Background serverni ishga tushirish
     threading.Thread(target=run_health_check_server, daemon=True).start()
 
     application = ApplicationBuilder().token(TOKEN).build()
@@ -218,8 +218,16 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     
-    # Python 3.14+ versiyadagi event loop muammosini hal qilish usuli
-    application.run_polling(drop_pending_updates=True)
+    # Event loop ni qo'lda ishga tushirish (Render muhiti uchun to'g'ri yechim)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(drop_pending_updates=True)
+    
+    # Bot to'xtab qolmasligi uchun kutish holati
+    await asyncio.Event().wait()
 
 if __name__ == '__main__':
-    main()
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
