@@ -48,43 +48,55 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     if response.status_code == 200 and data.get("status_code") == 200:
         return data["image"]["url"]
     else:
-        raise Exception(f"Yuklashda xatolik: {data}")
+        raise Exception(f"FreeImage ga yuklashda xatolik: {data.get('error', {}).get('message', 'Noma\'lum xato')}")
 
+# SIZ YUBORGAN ANIQ PROMPT VA JSON NUSHASI
 SYSTEM_PROMPT = """
-Siz e-commerce (Taobao/Pinduoduo/1688) skrinshotlaridan ma'lumot ajratuvchi AI assistentsiz.
-Rasmlardagi matnlarni sinchkovlik bilan o'qib, FAQAT qat'iy JSON formatida javob bering.
+Sana yuborilayotgan ushbu rasmlar e-commerce platformasi (Taobao/Pinduoduo/1688) uchun mahsulotning xarakteristikalari va tavsiflaridir.
+Rasmlardagi barcha matnlarni, jadvallarni va ma'lumotlarni sinchkovlik bilan o'qib chiqib, quyidagi qat'iy qoidalar bo'yicha JSON formatida javob ber:
 
 QOIDALAR:
-1. TIL: Barcha matn va tavsiflar faqat va faqat sof O'zbek tilida bo'lishi shart.
-2. VARIANTLAR: Faqat sotuvda bor (faol) rang va o'lchamlarni ajratib oling.
-3. SHARHLAR: Skrinshot va mahsulotdan kelib chiqib 4-6 ta tabiiy O'zbekcha xaridor sharhlarini shakllantiring.
-4. NARX: Skrinshotdagi asosiy narxni (Yuanda, faqat raqam, masalan "23.3") ajrating.
+1. TIL VA TARJIMA: Barcha matnlar, xususiyatlar, tavsif va sharhlar faqat va faqat sof, ravon va tushunarli O'zbek tilida bo'lishi shart. Inglizcha yoki xitoycha so'z va atamalardan foydalanma (masalan: "Printed" -> "Naqshli", "Slip-on" -> "Yengil kiyiladigan poyabzal", "Rubber" -> "Kauchuk/Rezina").
+2. VARIANT VA O'LCHAMLAR: Variant rasmlari yoki skrinshotlarini sinchkovlik bilan tahlil qil. Faqat sotuvda bor (faol, to'q shriftli) rang va o'lchamlarni ajratib ol. Xira, tugmasi faolsizlashtirilgan yoki tugagan variantlarni BUTUNLAY CHIQARIB TASHLA.
+3. KATALOG VA TYPE: 'catalog' va 'type' qiymatlarini faqat tasdiqlangan standart ro'yxat bo'yicha belgilang (Poyabzallar, Kiyim-kechak, Sumka va Aksessuarlar, Uy-ro'zg'or buyumlari, Maishiy texnika va h.k.).
+4. SHARHLAR (REVIEWS): Rasmlardagi ma'lumotlar va mahsulot xususiyatidan kelib chiqib, xaridori juda xursand bo'lgan 6-8 ta har xil va tabiiy chiroyli O'zbekcha sharhlar (text) generatsiya qilib ber.
 
-JAVOB QAT'IYAN SHU JSON FORMATIDA BO'LSHI SHART (ORTIQCHA MATN YOZMANGA):
+JAVOBNI QAT'IYAN QUYIDAGI JSON FORMATIDA QAYTAR (ORTIQCHA MATN YOZMA):
+
 {
-  "price": "23.3",
-  "name": "Mahsulot nomi",
-  "catalog": "Kategoriya nomi",
-  "type": "Mahsulot turi",
-  "description": "Mahsulot haqida batafsil tavsif...",
+  "price": "20.71",
+  "name": "Mahsulotning o'zbekcha nomi",
+  "catalog": "Poyabzallar",
+  "type": "Ayollar poyabzali",
+  "description": "Mahsulot haqida batafsil va jozibador O'zbekcha tavsif...",
   "variants": {
-    "Rang": ["Oq", "Qora"],
-    "Olcham": ["36", "37", "38"]
+    "Rang": ["Oq", "Moviy", "Xaki"],
+    "Olcham": ["35", "36", "37", "38", "39", "40"]
   },
   "stats": {
     "rating": "4.9",
-    "reviews": "1200",
-    "sold": "3500"
+    "reviews": "7000",
+    "views": "15000",
+    "likes": "7669",
+    "sold": "9436"
   },
   "extras": {
+    "Brend": "KaiQi",
     "Ustki material": "PU teri",
-    "Taglik": "Kauchuk"
+    "Taglik materiali": "Kauchuk / Rezina",
+    "Uslub": "Kundalik / Sport",
+    "Poshta balandligi": "3cm-5cm",
+    "Yopilish turi": "Bog'ichli (Ipli)"
   },
   "reviews_text": [
-    "Juda sifatli mahsulot, tavsiya qilaman!",
-    "O'z vaqtida yetib keldi, oyoqqa juda qulay."
+    "Oq krossovkalarni qabul qilib oldim va kiyib ko'rdim. O'lchami juda mos keldi, dizayni ajoyib!",
+    "Poyabzal juda bejirim va oyoqqa juda mos keladi. Qalin tagligi sirpanishga qarshi yaxshi...",
+    "Bu poyabzallar juda go'zal va kiyishga juda qulay. Ajoyib juftlik!",
+    "Bu poyabzalni olib hayratda qoldim! Sifatli tikilgan, ortiqcha iplari yo'q.",
+    "Juda qulay va zamonaviy, tavsiya qilaman!",
+    "Toza, yangi va kiyishga qulay. Narxiga to'liq arziydi!"
   ],
-  "instagram_caption": "💣 Zamonaviy krossovkalar..."
+  "instagram_caption": "💣 Ayollar uchun yangi va zamonaviy krossovkalar!..."
 }
 """
 
@@ -97,13 +109,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        "Salom! Mahsulot kartochkalarini yaratuvchi botga xush kelibsiz.\n\n"
+        "Salom! Mahsulot kartochkalarini HTML shaklida yaratuvchi botga xush kelibsiz.\n\n"
         "Boshlash uchun **▶️ Step 1 ni boshlash** tugmasini bosing.",
         reply_markup=reply_markup
     )
     return ConversationHandler.END
 
-# STEP 1: Asosiy rasmlar (FreeImage)
 async def start_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['step1_images'] = []
     context.user_data['step2_images'] = []
@@ -128,7 +139,6 @@ async def collect_step1_images(update: Update, context: ContextTypes.DEFAULT_TYP
         img_bytes = await file.download_as_bytearray()
         context.user_data.setdefault('step1_images', []).append(bytes(img_bytes))
 
-# STEP 2: Kommentariya rasmlari (FreeImage)
 async def to_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count1 = len(context.user_data.get('step1_images', []))
     
@@ -152,7 +162,6 @@ async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYP
         img_bytes = await file.download_as_bytearray()
         context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
 
-# STEP 3: Ma'lumotlar skrinshoti (Gemini API)
 async def to_step3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count2 = len(context.user_data.get('step2_images', []))
     
@@ -176,94 +185,137 @@ async def collect_step3_images(update: Update, context: ContextTypes.DEFAULT_TYP
         img_bytes = await file.download_as_bytearray()
         context.user_data.setdefault('step3_images', []).append(bytes(img_bytes))
 
-# Yakuniy ishlov berish
+# Step 3 Done tugmasi bosilganda ishlaydigan asosiy funksiya
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ Rasmlar va ma'lumotlar qayta ishlanmoqda...", reply_markup=ReplyKeyboardRemove())
+    restart_keyboard = [["▶️ Step 1 ni boshlash"]]
+    reply_markup_restart = ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
+
+    # 1. FreeImage ga yuklash jarayoni
+    await update.message.reply_text("📸 Rasmlar FreeImage serveriga yuklanmoqda...", reply_markup=ReplyKeyboardRemove())
     
-    # 1. Step 1 rasmlari FreeImage'ga (Product URLs)
     product_urls = []
-    for img in context.user_data.get('step1_images', []):
+    for idx, img in enumerate(context.user_data.get('step1_images', []), 1):
         try:
-            product_urls.append(upload_to_freeimage(img))
+            url = upload_to_freeimage(img)
+            product_urls.append(url)
         except Exception as e:
-            logging.error(f"Step 1 upload error: {e}")
+            await update.message.reply_text(f"❌ Muammo: Step 1 dagi {idx}-rasmni yuklashda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
+            return ConversationHandler.END
 
-    # 2. Step 2 rasmlari FreeImage'ga (Review URLs)
     review_urls = []
-    for img in context.user_data.get('step2_images', []):
+    for idx, img in enumerate(context.user_data.get('step2_images', []), 1):
         try:
-            review_urls.append(upload_to_freeimage(img))
+            url = upload_to_freeimage(img)
+            review_urls.append(url)
         except Exception as e:
-            logging.error(f"Step 2 upload error: {e}")
+            await update.message.reply_text(f"❌ Muammo: Step 2 dagi {idx}-rasmni yuklashda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
+            return ConversationHandler.END
 
-    # 3. Step 3 rasmlari Gemini AI ga yuboriladi
-    ai_data = {}
+    # 2. AI (Gemini) ga yuborish
     step3_imgs = context.user_data.get('step3_images', [])
-    
-    if step3_imgs and GEMINI_API_KEY:
-        try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            
-            contents = []
-            for img in step3_imgs:
-                contents.append({"mime_type": "image/jpeg", "data": img})
-            
-            contents.append("Ushbu skrinshotlardagi barcha ma'lumotlarni ko'rsatilgan JSON formatida ajratib ber.")
-            
-            loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: client.models.generate_content(
-                    model='gemini-2.5-flash', 
-                    contents=contents,
-                    config={"system_instruction": SYSTEM_PROMPT, "temperature": 0.1}
-                )
+    if not step3_imgs:
+        await update.message.reply_text("❌ Muammo: Step 3 da hech qanday skrinshot yuborilmadi!", reply_markup=reply_markup_restart)
+        return ConversationHandler.END
+
+    if not GEMINI_API_KEY:
+        await update.message.reply_text("❌ Muammo: GEMINI_API_KEY o'zgaruvchisi o'rnatilmagan!", reply_markup=reply_markup_restart)
+        return ConversationHandler.END
+
+    await update.message.reply_text("🤖 Step 3 rasmlari Gemini AI ga jo'natildi. Javob kutilmoqda...")
+
+    ai_data = {}
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        contents = []
+        for img in step3_imgs:
+            contents.append({"mime_type": "image/jpeg", "data": img})
+        
+        contents.append("Ushbu skrinshotlardagi barcha ma'lumotlarni ko'rsatilgan JSON formatida ajratib ber.")
+        
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None, 
+            lambda: client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=contents,
+                config={"system_instruction": SYSTEM_PROMPT, "temperature": 0.1}
             )
+        )
 
-            if response and response.text:
-                clean_json_str = re.sub(r'```json\s*|\s*```', '', response.text.strip())
-                ai_data = json.loads(clean_json_str)
-        except Exception as e:
-            logging.error(f"Gemini Step 3 Error: {e}")
+        if response and response.text:
+            clean_json_str = re.sub(r'```json\s*|\s*```', '', response.text.strip())
+            ai_data = json.loads(clean_json_str)
+        else:
+            raise Exception("Gemini API dan bo'sh javob qaytdi.")
 
-    # 4. Narxni so'mga o'girish
-    raw_price = float(ai_data.get("price", "0")) if ai_data.get("price") else 0
-    price_in_som = f"{int(raw_price * YUAN_RATE):,}".replace(",", " ") if raw_price else "0"
+    except Exception as e:
+        await update.message.reply_text(f"❌ Muammo: Gemini AI tahlil qilishda xatolik berdi:\n`{e}`", reply_markup=reply_markup_restart)
+        return ConversationHandler.END
 
-    # 5. HTML tayyorlash
-    product_images_html = "\n".join([f'      <img src="{url}" class="prod-img">' for url in product_urls])
-    review_images_html = "\n".join([f'      <img src="{url}" class="rev-img">' for url in review_urls])
-    reviews_list_html = "\n".join([f'      <li>{rev}</li>' for rev in ai_data.get("reviews_text", [])])
+    # 3. Javob keldi va HTML tayyorlanmoqda
+    await update.message.reply_text("⚡ AI javob qaytardi! HTML shablon shakllantirilmoqda...")
 
-    variants_html = ""
-    for v_key, v_vals in ai_data.get("variants", {}).items():
-        variants_html += f"      <p><b>{v_key}:</b> {', '.join(v_vals)}</p>\n"
+    try:
+        raw_price = float(ai_data.get("price", "0")) if ai_data.get("price") else 0
+        price_in_som = f"{int(raw_price * YUAN_RATE):,}".replace(",", " ") if raw_price else "0"
 
-    extras_html = ""
-    for e_key, e_val in ai_data.get("extras", {}).items():
-        extras_html += f"      <p><b>{e_key}:</b> {e_val}</p>\n"
+        # HTML komponentlarini tayyorlash
+        product_images_html = "\n".join([f'      <img src="{url}" alt="Mahsulot" class="prod-img">' for url in product_urls])
+        review_images_html = "\n".join([f'      <img src="{url}" alt="Xaridor rasmi" class="rev-img">' for url in review_urls])
+        reviews_list_html = "\n".join([f'      <li class="review-item">{rev}</li>' for rev in ai_data.get("reviews_text", [])])
 
-    html_code = f"""<div class="product-card">
-  <h2>{ai_data.get("name", "Mahsulot Nomi")}</h2>
-  <span class="price">{price_in_som} so'm</span>
-  
+        variants_html = ""
+        for v_key, v_vals in ai_data.get("variants", {}).items():
+            variants_html += f'      <div class="variant-group"><strong>{v_key}:</strong> {", ".join(v_vals)}</div>\n'
+
+        extras_html = ""
+        for e_key, e_val in ai_data.get("extras", {}).items():
+            extras_html += f'      <div class="extra-item"><span>{e_key}:</span> <strong>{e_val}</strong></div>\n'
+
+        stats = ai_data.get("stats", {})
+
+        # STRUKTURAVIY BOY HTML SHABLONI
+        html_code = f"""<div class="product-card">
+  <!-- Katalog va Turi -->
+  <div class="product-header">
+    <span class="catalog-badge">{ai_data.get("catalog", "Katalog")} / {ai_data.get("type", "Turi")}</span>
+    <h1 class="product-title">{ai_data.get("name", "Mahsulot Nomi")}</h1>
+    <div class="price-tag">{price_in_som} so'm</div>
+  </div>
+
+  <!-- Step 1: Asosiy Rasmlar Gallereyasi -->
   <div class="product-gallery">
 {product_images_html}
   </div>
 
-  <div class="description">
+  <!-- Mahsulot haqida Tavsif -->
+  <div class="product-description">
+    <h3>Mahsulot tavsifi</h3>
     <p>{ai_data.get("description", "")}</p>
   </div>
 
-  <div class="variants">
+  <!-- Variantlar (Rang va O'lcham) -->
+  <div class="product-variants">
+    <h3>Mavjud variantlar:</h3>
 {variants_html}  </div>
 
-  <div class="extras">
+  <!-- Qo'shimcha Xususiyatlar (Extras) -->
+  <div class="product-extras">
+    <h3>Xarakteristikalar:</h3>
 {extras_html}  </div>
 
-  <div class="reviews-section">
-    <h3>Xaridorlar fikri ({ai_data.get("stats", {}).get("rating", "5.0")} ⭐)</h3>
-    <ul>
+  <!-- Statistika -->
+  <div class="product-stats">
+    <span>⭐ Reiting: {stats.get("rating", "5.0")}</span> | 
+    <span>💬 Sharhlar: {stats.get("reviews", "0")}</span> | 
+    <span>🔥 Sotildi: {stats.get("sold", "0")}</span>
+  </div>
+
+  <!-- Step 2: Xaridorlar Sharhlari va Rasmlari -->
+  <div class="product-reviews">
+    <h3>Xaridorlar fikri va foto-sharhlar:</h3>
+    <ul class="reviews-list">
 {reviews_list_html}
     </ul>
     <div class="review-gallery">
@@ -272,14 +324,20 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
   </div>
 </div>"""
 
-    final_response = f"```html\n{html_code}\n```"
-    await update.message.reply_text(final_response, parse_mode="Markdown")
+        final_response = f"```html\n{html_code}\n```"
+        await update.message.reply_text(final_response, parse_mode="Markdown")
+        
+        # Instagram post matnini ham alohida ko'rsatish
+        if ai_data.get("instagram_caption"):
+            await update.message.reply_text(f"📱 **Instagram Caption:**\n\n{ai_data.get('instagram_caption')}")
 
-    restart_keyboard = [["▶️ Step 1 ni boshlash"]]
-    await update.message.reply_text(
-        "Yangi kartochka yaratish uchun tugmani bosing:",
-        reply_markup=ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
-    )
+        await update.message.reply_text(
+            "✅ Kartochka muvaffaqiyatli yaratildi! Yangi kartochka uchun tugmani bosing:",
+            reply_markup=reply_markup_restart
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Muammo: HTML kodni shakllantirishda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
+
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
