@@ -3,6 +3,8 @@ import logging
 import asyncio
 import requests
 import re
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
 from google.genai import types
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -28,6 +30,18 @@ LOCK = asyncio.Lock()
 
 YUAN_RATE = 1780 
 
+# Render port xatosini oldini olish uchun soxta server
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Active")
+
+def run_health_check_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
 def upload_to_freeimage(img_bytes: bytes) -> str:
     url = "https://freeimage.host/api/1/upload"
     payload = {
@@ -45,7 +59,6 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     else:
         raise Exception(f"Yuklashda xatolik: {data}")
 
-# AI uchun sodda prompt - faqat narxni topib beradi
 SYSTEM_PROMPT = """
 Siz skrinshotdan mahsulot narxini aniqlaydigan AI assistentsiz.
 Skrinshotdagi asosiy narxni toping va FAQAT raqamni qaytaring (masalan: 25.5 yoki 120). 
@@ -115,7 +128,6 @@ async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYP
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ HTML kod tayyorlanmoqda...", reply_markup=ReplyKeyboardRemove())
     
-    # 1. FreeImage ga rasmlarni yuklash
     step1_urls = []
     for img in context.user_data.get('step1_images', []):
         try:
@@ -124,7 +136,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"FreeImage xatosi: {e}")
 
-    # 2. Skrinshotdan narxni aniqlash va so'mga o'girish
     price_in_som = "0"
     step2_imgs = context.user_data.get('step2_images', [])
     
@@ -156,7 +167,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Gemini xatosi: {e}")
 
-    # 3. HTML shablonini shakllantirish
     images_html = "\n".join([f'    <img src="{url}">' for url in step1_urls])
     
     html_code = f"""<div class="product">
@@ -166,7 +176,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
   <span class="price">{price_in_som} so'm</span>
 </div>"""
 
-    # Natijani HTML kod formatida yuborish
     final_response = f"```html\n{html_code}\n```"
     await update.message.reply_text(final_response, parse_mode="Markdown")
 
@@ -182,6 +191,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
+    # Render uchun background serverni ishga tushirish
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+
     application = ApplicationBuilder().token(TOKEN).build()
     
     conv_handler = ConversationHandler(
@@ -206,6 +218,7 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
     
+    # Python 3.14+ versiyadagi event loop muammosini hal qilish usuli
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
