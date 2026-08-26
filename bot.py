@@ -2,7 +2,6 @@ import os
 import logging
 import asyncio
 import requests
-import re
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
@@ -25,8 +24,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 STEP1, STEP2 = range(2)
 LOCK = asyncio.Lock()
 
-YUAN_RATE = 1780 
-
+# Render uchun background server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -55,10 +53,20 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     else:
         raise Exception(f"Yuklashda xatolik: {data}")
 
+# AI uchun asosiy ko'rsatma: HTML yaratish va URL'larni joylashni to'liq Gemini bajaradi
 SYSTEM_PROMPT = """
-Skrinshotdagi asosiy sotuv narxini toping.
-FAQAT VA FAQAT raqamni qaytaring (masalan: 23.3). 
-Hech qanday valyuta belgisi (¥, $), so'z yoki qo'shimcha text yozmang!
+Siz elektron tijorat uchun HTML kartochkalar yaratuvchi AI assistentsiz.
+
+Sizga quyidagilar taqdim etiladi:
+1. Mahsulot skrinshot rasmi (Step 2).
+2. Mahsulotning FreeImage havolalari ro'yxati (Step 1).
+
+Sizning vazifangiz:
+1. Skrinshotdagi mahsulot narxini aniqlash va uni 1 Yuan = 1780 So'm kursi bo'yicha O'zbek so'miga o'girish.
+2. Sizga taqdim etilgan FreeImage URL havolalarini HTML `<img>` teglariga joylashtirish.
+3. Kerakli ma'lumotlarni o'z ichiga olgan toza HTML kodini generatsiya qilish.
+
+Javobingizda FAQAT HTML kod bo'lishi kerak. Hech qanday qo'shimcha tushuntirish yozmang.
 """
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,7 +77,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
     
     await update.message.reply_text(
-        "Salom! Mahsulot rasmlari va narxidan sodda HTML kod yaratuvchi botga xush kelibsiz.\n\n"
+        "Salom! Mahsulot rasmlari va narxidan HTML yaratuvi botga xush kelibsiz.\n\n"
         "Boshlash uchun **▶️ Step 1 ni boshlash** tugmasini bosing.",
         reply_markup=reply_markup
     )
@@ -122,9 +130,9 @@ async def collect_step2_images(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.setdefault('step2_images', []).append(bytes(img_bytes))
 
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ HTML kod tayyorlanmoqda...", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("⏳ Gemini HTML kodini generatsiya qilmoqda...", reply_markup=ReplyKeyboardRemove())
     
-    # 1. FreeImage rasmlarni yuklash
+    # 1. Step 1 rasmlarini FreeImage'ga yuklab URL'lar ro'yxatini shakllantirish
     step1_urls = []
     for img in context.user_data.get('step1_images', []):
         try:
@@ -133,52 +141,56 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"FreeImage xatosi: {e}")
 
-    # 2. Gemini orqali narxni aniqlash
-    price_in_som = "0"
+    urls_formatted = "\n".join(step1_urls)
+    
+    # 2. Gemini'ga uzatish uchun prompt tayyorlash
+    user_prompt = (
+        f"Ushbu skrinshotdan narxni o'qi va so'mga o'gir.\n"
+        f"Quyidagi rasm URL havolalaridan HTML koding ichida foydalan:\n"
+        f"{urls_formatted}"
+    )
+
+    gemini_html_response = ""
     step2_imgs = context.user_data.get('step2_images', [])
     
-    if step2_imgs and GEMINI_API_KEY:
+    # 3. Gemini API bilan bog'lanish
+    if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             
-            # Gemini'ga rasm va textni bitta massivda uzatamiz
-            contents = [
-                SYSTEM_PROMPT,
-                {"mime_type": "image/jpeg", "data": step2_imgs[0]}
-            ]
+            contents = []
+            # Agar skrinshot bo'lsa uni yuklaymiz
+            if step2_imgs:
+                contents.append({"mime_type": "image/jpeg", "data": step2_imgs[0]})
+            
+            contents.append(user_prompt)
             
             loop = asyncio.get_running_loop()
             
-            # Model orqali murojaat qilish
+            # Gemini-2.5-flash orqali HTML generatsiya qilamiz
             response = await loop.run_in_executor(
                 None, 
                 lambda: client.models.generate_content(
                     model='gemini-2.5-flash', 
-                    contents=contents
+                    contents=contents,
+                    config={"system_instruction": SYSTEM_PROMPT, "temperature": 0.2}
                 )
             )
 
             if response and response.text:
-                logging.info(f"Gemini javobi: {response.text}")
-                # Raqamni ajratib olish (masalan 23.3)
-                match = re.search(r"\d+(\.\d+)?", response.text.strip())
-                if match:
-                    price_val = float(match.group())
-                    som_val = int(price_val * YUAN_RATE)
-                    price_in_som = f"{som_val:,}".replace(",", " ")
+                gemini_html_response = response.text.strip()
         except Exception as e:
             logging.error(f"Gemini chaqirishda xatolik: {e}")
+            gemini_html_response = f"<!-- Gemini Xatoligi: {str(e)} -->"
+    else:
+        gemini_html_response = "<!-- GEMINI_API_KEY topilmadi -->"
 
-    images_html = "\n".join([f'    <img src="{url}">' for url in step1_urls])
-    
-    html_code = f"""<div class="product">
-  <div class="images">
-{images_html}
-  </div>
-  <span class="price">{price_in_som} so'm</span>
-</div>"""
+    # Kod blokini to'g'ri formatlash
+    if not gemini_html_response.startswith("```"):
+        final_response = f"```html\n{gemini_html_response}\n```"
+    else:
+        final_response = gemini_html_response
 
-    final_response = f"```html\n{html_code}\n```"
     await update.message.reply_text(final_response, parse_mode="Markdown")
 
     restart_keyboard = [["▶️ Step 1 ni boshlash"]]
