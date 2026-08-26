@@ -4,6 +4,7 @@ import asyncio
 import requests
 import json
 import re
+import io
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import genai
@@ -48,9 +49,8 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     if response.status_code == 200 and data.get("status_code") == 200:
         return data["image"]["url"]
     else:
-        raise Exception(f"FreeImage ga yuklashda xatolik: {data.get('error', {}).get('message', 'Noma\'lum xato')}")
+        raise Exception(f"FreeImage ga yuklashda xatolik: {data.get('error', {}).get('message', 'Noma\\'lum xato')}")
 
-# SIZ YUBORGAN ANIQ PROMPT VA JSON NUSHASI
 SYSTEM_PROMPT = """
 Sana yuborilayotgan ushbu rasmlar e-commerce platformasi (Taobao/Pinduoduo/1688) uchun mahsulotning xarakteristikalari va tavsiflaridir.
 Rasmlardagi barcha matnlarni, jadvallarni va ma'lumotlarni sinchkovlik bilan o'qib chiqib, quyidagi qat'iy qoidalar bo'yicha JSON formatida javob ber:
@@ -185,7 +185,6 @@ async def collect_step3_images(update: Update, context: ContextTypes.DEFAULT_TYP
         img_bytes = await file.download_as_bytearray()
         context.user_data.setdefault('step3_images', []).append(bytes(img_bytes))
 
-# Step 3 Done tugmasi bosilganda ishlaydigan asosiy funksiya
 async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     restart_keyboard = [["▶️ Step 1 ni boshlash"]]
     reply_markup_restart = ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
@@ -260,7 +259,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_price = float(ai_data.get("price", "0")) if ai_data.get("price") else 0
         price_in_som = f"{int(raw_price * YUAN_RATE):,}".replace(",", " ") if raw_price else "0"
 
-        # HTML komponentlarini tayyorlash
         product_images_html = "\n".join([f'      <img src="{url}" alt="Mahsulot" class="prod-img">' for url in product_urls])
         review_images_html = "\n".join([f'      <img src="{url}" alt="Xaridor rasmi" class="rev-img">' for url in review_urls])
         reviews_list_html = "\n".join([f'      <li class="review-item">{rev}</li>' for rev in ai_data.get("reviews_text", [])])
@@ -275,44 +273,36 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         stats = ai_data.get("stats", {})
 
-        # STRUKTURAVIY BOY HTML SHABLONI
         html_code = f"""<div class="product-card">
-  <!-- Katalog va Turi -->
   <div class="product-header">
     <span class="catalog-badge">{ai_data.get("catalog", "Katalog")} / {ai_data.get("type", "Turi")}</span>
     <h1 class="product-title">{ai_data.get("name", "Mahsulot Nomi")}</h1>
     <div class="price-tag">{price_in_som} so'm</div>
   </div>
 
-  <!-- Step 1: Asosiy Rasmlar Gallereyasi -->
   <div class="product-gallery">
 {product_images_html}
   </div>
 
-  <!-- Mahsulot haqida Tavsif -->
   <div class="product-description">
     <h3>Mahsulot tavsifi</h3>
     <p>{ai_data.get("description", "")}</p>
   </div>
 
-  <!-- Variantlar (Rang va O'lcham) -->
   <div class="product-variants">
     <h3>Mavjud variantlar:</h3>
 {variants_html}  </div>
 
-  <!-- Qo'shimcha Xususiyatlar (Extras) -->
   <div class="product-extras">
     <h3>Xarakteristikalar:</h3>
 {extras_html}  </div>
 
-  <!-- Statistika -->
   <div class="product-stats">
     <span>⭐ Reiting: {stats.get("rating", "5.0")}</span> | 
     <span>💬 Sharhlar: {stats.get("reviews", "0")}</span> | 
     <span>🔥 Sotildi: {stats.get("sold", "0")}</span>
   </div>
 
-  <!-- Step 2: Xaridorlar Sharhlari va Rasmlari -->
   <div class="product-reviews">
     <h3>Xaridorlar fikri va foto-sharhlar:</h3>
     <ul class="reviews-list">
@@ -324,10 +314,16 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
   </div>
 </div>"""
 
-        final_response = f"```html\n{html_code}\n```"
-        await update.message.reply_text(final_response, parse_mode="Markdown")
+        # 4. PYTHON XOTIRASIDA (RAM) .HTML FAYL YARATISH VA YUBORISH
+        html_file = io.BytesIO(html_code.encode('utf-8'))
+        html_file.name = "product_card.html"
         
-        # Instagram post matnini ham alohida ko'rsatish
+        await update.message.reply_document(
+            document=html_file, 
+            caption="📄 **Tayyor HTML faylingiz!**"
+        )
+
+        # Instagram post matnini alohida yuborish
         if ai_data.get("instagram_caption"):
             await update.message.reply_text(f"📱 **Instagram Caption:**\n\n{ai_data.get('instagram_caption')}")
 
