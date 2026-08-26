@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import io
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
@@ -60,7 +61,6 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     else:
         raise Exception(f"Yuklashda xatolik: {data}")
 
-# Kuchaytirilgan System Prompt
 SYSTEM_PROMPT = """
 Siz — e-commerce platformasi uchun Xitoy marketplace'laridan olingan mahsulot ma'lumotlarini o'zbek tilidagi standart HTML kartochka formatiga to'liq o'girib beruvchi professional AI assistentsiz.
 
@@ -75,7 +75,7 @@ QAT'IY QOIDALAR:
 4. Xira (sotuvdan chiqqan) variantlarni <div class="variant"> ichiga qo'shmang.
 5. Sharh muallifiga tasodifiy "ID: 10 xonali raqam" bering.
 
-STANDART HTML SHABLON STRUKTURASI (Faqat toza HTML kodi qaytaring, ortiqcha matn yozmang):
+STANDART HTML SHABLON STRUKTURASI (Faqat toza HTML kodi qaytaring, ortiqcha izoh yozmang):
 <div class="product">
   <div class="images">
     <img src="STEP_1_URL_1">
@@ -131,8 +131,7 @@ async def start_step1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📸 **Step 1:** Asosiy mahsulot rasmlarini yuboring.\n\n"
         "Rasmlarni yuborib bo'lgach, **Next: Step 2 ➡️** tugmasini bosing.",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
+        reply_markup=reply_markup
     )
     return STEP1
 
@@ -157,8 +156,7 @@ async def start_step2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Step 1 (Asosiy rasmlar): {count} ta rasm qabul qilindi.\n\n"
         "📸 **Step 2:** Sharh (otziv) rasmlarini yuboring.\n\n"
         "Rasmlarni yuborib bo'lgach, **Next: Step 3 ➡️** tugmasini bosing.",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
+        reply_markup=reply_markup
     )
     return STEP2
 
@@ -174,8 +172,7 @@ async def start_step3(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Step 2 (Sharh rasmlari): {count} ta rasm qabul qilindi.\n\n"
         "📸 **Step 3:** Ma'lumotlarni o'qib olish uchun skrinshotlarni yuboring (xususiyatlar, narx, sharh matnlari).\n\n"
         "Rasmlarni yuborib bo'lgach, **Done ✅** tugmasini bosing.",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
+        reply_markup=reply_markup
     )
     return STEP3
 
@@ -188,8 +185,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"✅ Step 3 (Skrinshotlar): {count3} ta rasm qabul qilindi.\n\n"
         "⏳ **1-qadam:** Rasmlar FreeImage host xizmatiga yuklanmoqda...",
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode="Markdown"
+        reply_markup=ReplyKeyboardRemove()
     )
     
     # Step 1 va 2 rasmlarini URL'ga aylantirish
@@ -206,12 +202,11 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Step 2 yuklash xatosi: {e}")
 
-    await update.message.reply_text("⏳ **2-qadam:** Gemini API skrinshotlar va havolalarni tahlil qilmoqda...", parse_mode="Markdown")
+    await update.message.reply_text("⏳ **2-qadam:** Gemini API skrinshotlar va havolalarni tahlil qilmoqda...")
 
     try:
         contents = []
         
-        # URL havolalarini Gemini'ga aniq ko'rsatma sifatida berish
         urls_instruction = "SIZGA YUBORILAYOTGAN TAYYOR RASM HAVOLALARI:\n\n"
         urls_instruction += "STEP 1 URL (Asosiy rasmlar galereyasi uchun <div class=\"images\"> ichiga qo'ying):\n"
         urls_instruction += "\n".join(step1_urls) if step1_urls else "Mavjud emas"
@@ -222,7 +217,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         contents.append(urls_instruction)
         
-        # Step 3 rasmlarini (skrinshotlarni) yuborish
         for img in context.user_data.get('step3_images', []):
             contents.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
 
@@ -234,7 +228,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         html_result = response.text.strip() if response.text else "Ma'lumot ajratib bo'lmadi."
         
-        # Agar javobda ```html teglari bo'lsa ularni tozalab olib tashlash
+        # ```html teglarni tozalash
         if html_result.startswith("```"):
             lines = html_result.splitlines()
             if lines[0].startswith("```"):
@@ -243,13 +237,17 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines = lines[:-1]
             html_result = "\n".join(lines).strip()
 
-        final_text = f"```html\n{html_result}\n```"
-        
-        if len(final_text) <= 4000:
-            await update.message.reply_text(final_text, parse_mode="Markdown")
+        # HTML javobni matn shaklida yuborish (parse_mode ishlatmasdan parsing xatosini oldini olamiz)
+        if len(html_result) <= 4000:
+            await update.message.reply_text(html_result)
         else:
-            for i in range(0, len(final_text), 4000):
-                await update.message.reply_text(final_text[i:i+4000], parse_mode="Markdown")
+            for i in range(0, len(html_result), 4000):
+                await update.message.reply_text(html_result[i:i+4000])
+
+        # HTML fayl ko'rinishida ham yuborish (saytga birdan ishlatish uchun qulay)
+        html_bytes = io.BytesIO(html_result.encode('utf-8'))
+        html_bytes.name = "product_card.html"
+        await update.message.reply_document(document=html_bytes, caption="📄 Tayyor HTML fayl")
 
     except Exception as e:
         await update.message.reply_text(f"❌ Xatolik yuz berdi: {str(e)}")
