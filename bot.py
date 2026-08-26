@@ -49,7 +49,8 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     if response.status_code == 200 and data.get("status_code") == 200:
         return data["image"]["url"]
     else:
-        raise Exception(f"FreeImage ga yuklashda xatolik: {data.get('error', {}).get('message', 'Noma\\'lum xato')}")
+        err_msg = data.get('error', {}).get('message', "Noma'lum xato")
+        raise Exception(f"FreeImage ga yuklashda xatolik: {err_msg}")
 
 SYSTEM_PROMPT = """
 Sana yuborilayotgan ushbu rasmlar e-commerce platformasi (Taobao/Pinduoduo/1688) uchun mahsulotning xarakteristikalari va tavsiflaridir.
@@ -189,7 +190,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     restart_keyboard = [["▶️ Step 1 ni boshlash"]]
     reply_markup_restart = ReplyKeyboardMarkup(restart_keyboard, resize_keyboard=True, is_persistent=True)
 
-    # 1. FreeImage ga yuklash jarayoni
     await update.message.reply_text("📸 Rasmlar FreeImage serveriga yuklanmoqda...", reply_markup=ReplyKeyboardRemove())
     
     product_urls = []
@@ -210,7 +210,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Muammo: Step 2 dagi {idx}-rasmni yuklashda xatolik:\n`{e}`", reply_markup=reply_markup_restart)
             return ConversationHandler.END
 
-    # 2. AI (Gemini) ga yuborish
     step3_imgs = context.user_data.get('step3_images', [])
     if not step3_imgs:
         await update.message.reply_text("❌ Muammo: Step 3 da hech qanday skrinshot yuborilmadi!", reply_markup=reply_markup_restart)
@@ -252,7 +251,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Muammo: Gemini AI tahlil qilishda xatolik berdi:\n`{e}`", reply_markup=reply_markup_restart)
         return ConversationHandler.END
 
-    # 3. Javob keldi va HTML tayyorlanmoqda
     await update.message.reply_text("⚡ AI javob qaytardi! HTML shablon shakllantirilmoqda...")
 
     try:
@@ -314,7 +312,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
   </div>
 </div>"""
 
-        # 4. PYTHON XOTIRASIDA (RAM) .HTML FAYL YARATISH VA YUBORISH
         html_file = io.BytesIO(html_code.encode('utf-8'))
         html_file.name = "product_card.html"
         
@@ -323,7 +320,6 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="📄 **Tayyor HTML faylingiz!**"
         )
 
-        # Instagram post matnini alohida yuborish
         if ai_data.get("instagram_caption"):
             await update.message.reply_text(f"📱 **Instagram Caption:**\n\n{ai_data.get('instagram_caption')}")
 
