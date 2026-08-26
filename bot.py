@@ -13,7 +13,7 @@ from telegram.ext import (
     filters,
 )
 
-# Logging
+# Logging sozlamalari
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("BOT_TOKEN")
@@ -22,7 +22,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 # Gemini SDK klienti
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Render port xatosi bermasligi uchun soxta server
+# Render Web Service port xatosini oldini olish uchun soxta server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -60,7 +60,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("⏳ Narx tahlil qilinmoqda...")
     
     try:
-        # Eng yuqori sifatdagi rasmni olish
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
@@ -73,17 +72,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         ]
 
-        # Gemini so'rovini fonda bajaramiz
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
             None, 
             lambda: client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=contents,
+                config={
+                    "max_output_tokens": 150  # Uzun matn generatsiyasini va Message_too_long xatosini qat'iy cheklash
+                }
             )
         )
 
-        await status_msg.edit_text(response.text, parse_mode="Markdown")
+        result_text = response.text if response.text else "Narx aniqlanmadi."
+        
+        # Telegram sig'im cheklovi uchun xavfsizlik filtri
+        if len(result_text) > 3500:
+            result_text = result_text[:3500]
+
+        await status_msg.edit_text(result_text, parse_mode="Markdown")
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}")
@@ -101,7 +108,6 @@ async def run_bot():
     await asyncio.Event().wait()
 
 def main():
-    # Render port tekshiruvi uchun serverni ishga tushirish
     threading.Thread(target=run_health_check_server, daemon=True).start()
     
     try:
