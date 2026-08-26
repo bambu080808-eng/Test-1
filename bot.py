@@ -4,6 +4,7 @@ import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 from google import genai
+from google.genai import types
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -39,14 +40,14 @@ Sana e-commerce platformasidan (Taobao/Pinduoduo/1688) olingan mahsulot rasmi yu
 Sening yagona vazifang:
 1. Rasmdagi mahsulot narxini topish (odatda Yuan/¥ da berilgan bo'ladi).
 2. Ushbu narxni O'zbekiston so'miga taxminiy o'girish (1 Yuan = 1800 so'm nisbatida).
-3. Faqat va faqat quyidagi formatda qisqa javob berish:
+3. Faqat va faqat quyidagi formatda qisqa va aniq javob berish (ortiqcha hech narsa yozma):
 
-💰 **Mahsulot narxi:**
+💰 Mahsulot narxi:
 • Yuan: [topilgan narx] ¥
 • So'mda: [hisoblangan narx] so'm
 
 Misol uchun:
-💰 **Mahsulot narxi:**
+💰 Mahsulot narxi:
 • Yuan: 23.3 ¥
 • So'mda: 41,940 so'm
 
@@ -66,11 +67,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         contents = [
             SYSTEM_PROMPT,
-            {
-                "mime_type": "image/jpeg",
-                "data": bytes(img_bytes)
-            }
+            types.Part.from_bytes(
+                data=bytes(img_bytes),
+                mime_type="image/jpeg",
+            )
         ]
+
+        # Config sozlamasi yangi SDK shaklida berildi
+        config = types.GenerateContentConfig(
+            max_output_tokens=100,
+            temperature=0.2
+        )
 
         loop = asyncio.get_running_loop()
         response = await loop.run_in_executor(
@@ -78,19 +85,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lambda: client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=contents,
-                config={
-                    "max_output_tokens": 150  # Uzun matn generatsiyasini va Message_too_long xatosini qat'iy cheklash
-                }
+                config=config
             )
         )
 
-        result_text = response.text if response.text else "Narx aniqlanmadi."
+        result_text = response.text.strip() if response.text else "Narx aniqlanmadi."
         
-        # Telegram sig'im cheklovi uchun xavfsizlik filtri
-        if len(result_text) > 3500:
-            result_text = result_text[:3500]
+        # Telegram sig'im cheklovi uchun qirqish
+        if len(result_text) > 3000:
+            result_text = result_text[:3000]
 
-        await status_msg.edit_text(result_text, parse_mode="Markdown")
+        # parse_mode olib tashlandi (Markdown sintaksis xatolarini oldini olish uchun)
+        await status_msg.edit_text(result_text)
 
     except Exception as e:
         await status_msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}")
