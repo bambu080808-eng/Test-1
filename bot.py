@@ -61,6 +61,7 @@ def upload_to_freeimage(img_bytes: bytes) -> str:
     else:
         raise Exception(f"Yuklashda xatolik: {data}")
 
+# AI uchun tizim ko'rsatmasi
 SYSTEM_PROMPT = """
 Siz — e-commerce platformasi uchun Xitoy marketplace'laridan olingan mahsulot ma'lumotlarini o'zbek tilidagi standart HTML kartochka formatiga to'liq o'girib beruvchi professional AI assistentsiz.
 
@@ -188,7 +189,7 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Step 1 va 2 rasmlarini URL'ga aylantirish
+    # Step 1 va Step 2 rasmlarini URL ga o'girish
     step1_urls, step2_urls = [], []
     for img in context.user_data.get('step1_images', []):
         try:
@@ -222,13 +223,30 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         config = types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, temperature=0.1)
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None, lambda: client.models.generate_content(model='gemini-3.6-flash', contents=contents, config=config)
-        )
-
-        html_result = response.text.strip() if response.text else "Ma'lumot ajratib bo'lmadi."
         
-        # ```html teglarni tozalash
+        # Google API serveri band bo'lganda (503 status kelsa) 3 marta qayta urinish
+        response = None
+        for attempt in range(3):
+            try:
+                response = await loop.run_in_executor(
+                    None, lambda: client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=contents, 
+                        config=config
+                    )
+                )
+                if response:
+                    break
+            except Exception as req_err:
+                if "503" in str(req_err) and attempt < 2:
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    raise req_err
+
+        html_result = response.text.strip() if (response and response.text) else "Ma'lumot ajratib bo'lmadi."
+        
+        # Keraksiz markdown ```html teglarni olib tashlash
         if html_result.startswith("```"):
             lines = html_result.splitlines()
             if lines[0].startswith("```"):
@@ -237,14 +255,14 @@ async def finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lines = lines[:-1]
             html_result = "\n".join(lines).strip()
 
-        # HTML javobni matn shaklida yuborish (parse_mode ishlatmasdan parsing xatosini oldini olamiz)
+        # HTML matn ko'rinishida yuborish
         if len(html_result) <= 4000:
             await update.message.reply_text(html_result)
         else:
             for i in range(0, len(html_result), 4000):
                 await update.message.reply_text(html_result[i:i+4000])
 
-        # HTML fayl ko'rinishida ham yuborish (saytga birdan ishlatish uchun qulay)
+        # HTML tayyor fayl sifatida ham yuborish
         html_bytes = io.BytesIO(html_result.encode('utf-8'))
         html_bytes.name = "product_card.html"
         await update.message.reply_document(document=html_bytes, caption="📄 Tayyor HTML fayl")
