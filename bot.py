@@ -30,7 +30,6 @@ def run_health_check_server():
     server.serve_forever()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Foydalanuvchining rasmlar ro'yxatini va statistikasini nolga tushiramiz
     context.user_data['photos'] = []
     context.user_data['total_received'] = 0
     context.user_data['collecting'] = True
@@ -49,7 +48,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Rasmlarni qaytadan yuborish uchun /start tugmasini bosing.")
         return
 
-    # Kelgan barcha rasm hodisalarini sanaymiz
     context.user_data['total_received'] = context.user_data.get('total_received', 0) + 1
     
     try:
@@ -83,7 +81,6 @@ async def handle_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Statistika xabari
     report_msg = (
         f"📊 **Rasmlar qabul qilindi:**\n"
         f"• Jo'natilgan rasmlar: {total} ta\n"
@@ -92,29 +89,18 @@ async def handle_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     await update.message.reply_text(report_msg, reply_markup=ReplyKeyboardRemove())
-    
-    # BU YERGA IKKINCHI BOSQICHDA GEMINI TAHLIL FUNTSIYASI ULANADI
 
-async def run_bot():
+def main():
+    threading.Thread(target=run_health_check_server, daemon=True).start()
+    
     application = ApplicationBuilder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     application.add_handler(MessageHandler(filters.Regex("^✅ Done$"), handle_done))
     
-    await application.initialize()
-    await application.start()
-    application.updater.start_polling()
-    
-    await asyncio.Event().wait()
-
-def main():
-    threading.Thread(target=run_health_check_server, daemon=True).start()
-    
-    try:
-        asyncio.run(run_bot())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    # Standard va xatosiz polling usuli
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
