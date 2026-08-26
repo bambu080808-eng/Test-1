@@ -1,12 +1,9 @@
 import os
 import logging
 import asyncio
-import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
-from google import genai
-from google.genai import types
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -19,10 +16,6 @@ from telegram.ext import (
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = os.environ.get("BOT_TOKEN")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-
-# Gemini SDK klienti
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Render Web Service port xatosini oldini olish uchun soxta server
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -36,81 +29,82 @@ def run_health_check_server():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-SYSTEM_PROMPT = """
-Sana e-commerce platformasidan olingan rasm yuboriladi.
-Rasmdagi mahsulot narxini top (Yuan/¥ da) va uni O'zbekiston so'miga o'gir (1 Yuan = 1800 so'm nisbatida).
-Javobni faqat va faqat JSON formatida qaytar:
-{
-  "yuan": "23.3",
-  "som": "41,940",
-  "found": true
-}
-Agar narx topilmasa:
-{
-  "found": false
-}
-"""
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Salom! Menga mahsulot skrinshotini yuboring, men narxini so'mda hisoblab beraman.")
+    # Foydalanuvchining rasmlar ro'yxatini va statistikasini nolga tushiramiz
+    context.user_data['photos'] = []
+    context.user_data['total_received'] = 0
+    context.user_data['collecting'] = True
+
+    keyboard = [[KeyboardButton("✅ Done")]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+    await update.message.reply_text(
+        "Salom! Mahsulot rasmlarini (albom, bittalab yoki aralash) yuboring.\n\n"
+        "Barcha rasmlarni yuborib bo'lgach, pastdagi **'✅ Done'** tugmasini bosing.",
+        reply_markup=reply_markup
+    )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("⏳ Narx tahlil qilinmoqda...")
+    if not context.user_data.get('collecting', False):
+        await update.message.reply_text("Rasmlarni qaytadan yuborish uchun /start tugmasini bosing.")
+        return
+
+    # Kelgan barcha rasm hodisalarini sanaymiz
+    context.user_data['total_received'] = context.user_data.get('total_received', 0) + 1
     
     try:
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         img_bytes = await file.download_as_bytearray()
-
-        contents = [
-            types.Part.from_bytes(
-                data=bytes(img_bytes),
-                mime_type="image/jpeg",
-            )
-        ]
-
-        # JSON structured output sozlamasi
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            temperature=0.1
-        )
-
-        loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None, 
-            lambda: client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=contents,
-                config=config
-            )
-        )
-
-        # JSON javobni qayta ishlash
-        data = json.loads(response.text)
         
-        if data.get("found"):
-            yuan = data.get("yuan", "—")
-            som = data.get("som", "—")
+        if 'photos' not in context.user_data:
+            context.user_data['photos'] = []
             
-            result_text = f"💰 **Mahsulot narxi:**\n• Yuan: {yuan} ¥\n• So'mda: {som} so'm"
-        else:
-            result_text = "❌ Rasmda narx ko'rinmadi, iltimos narxi aniq ko'ringan rasm yuboring."
-
-        await status_msg.edit_text(result_text, parse_mode="Markdown")
-
+        context.user_data['photos'].append(bytes(img_bytes))
+        
     except Exception as e:
-        await status_msg.edit_text(f"❌ Xatolik yuz berdi: {str(e)}")
+        logging.error(f"Rasm yuklashda xatolik: {e}")
+
+async def handle_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get('collecting', False):
+        await update.message.reply_text("Yangi seans boshlash uchun /start buyrug'ini yuboring.", reply_markup=ReplyKeyboardRemove())
+        return
+
+    context.user_data['collecting'] = False
+    
+    total = context.user_data.get('total_received', 0)
+    photos = context.user_data.get('photos', [])
+    success_count = len(photos)
+
+    if success_count == 0:
+        await update.message.reply_text(
+            "❌ Hech qanday rasm qabul qilinmadi. Iltimos, /start bosib rasmlarni qayta yuboring.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return
+
+    # Statistika xabari
+    report_msg = (
+        f"📊 **Rasmlar qabul qilindi:**\n"
+        f"• Jo'natilgan rasmlar: {total} ta\n"
+        f"• Muvaffaqiyatli qabul qilindi: {success_count} ta\n\n"
+        f"⏳ Ma'lumotlarni ajratib olish va tahlil qilish boshlanmoqda..."
+    )
+    
+    await update.message.reply_text(report_msg, reply_markup=ReplyKeyboardRemove())
+    
+    # BU YERGA IKKINCHI BOSQICHDA GEMINI TAHLIL FUNTSIYASI ULANADI
 
 async def run_bot():
     application = ApplicationBuilder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    application.add_handler(MessageHandler(filters.Regex("^✅ Done$"), handle_done))
     
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()
+    application.updater.start_polling()
     
     await asyncio.Event().wait()
 
